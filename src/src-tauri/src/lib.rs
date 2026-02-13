@@ -87,13 +87,22 @@ async fn capture_monitor_screenshot(monitor_index: Option<usize>) -> Result<Base
 /// or `null` if the user cancelled the dialog.
 #[tauri::command]
 async fn pick_image_file(app: tauri::AppHandle) -> Result<Option<Base64Image>, String> {
-    let file_path = app
-        .dialog()
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    app.dialog()
         .file()
         .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"])
         .set_title("Select an image")
-        .pick_file()
-        .await;
+        .pick_file(move |file_path| {
+            let _ = tx.send(file_path);
+        });
+
+    // Wait for the user's selection on a blocking thread to avoid stalling the async runtime
+    let file_path = tauri::async_runtime::spawn_blocking(move || {
+        rx.recv().map_err(|e| format!("Dialog channel error: {e}"))
+    })
+    .await
+    .map_err(|e| format!("Dialog task failed: {e}"))??;
 
     match file_path {
         Some(path) => {

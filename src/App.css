@@ -1,42 +1,641 @@
-#root {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 2rem;
+/* ── Layout ────────────────────────────────────────────────────────── */
+
+.app-layout {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ── Sidebar ───────────────────────────────────────────────────────── */
+
+.sidebar {
+  width: 280px;
+  min-width: 280px;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: rgba(255, 255, 255, 0.03);
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.sidebar-header {
+  padding: 20px 16px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sidebar-header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sidebar-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgba(255, 255, 255, 0.45);
+  margin: 0;
+}
+
+.btn-new-chat {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #646cff;
+  color: #fff;
+  border: none;
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  width: 100%;
+  justify-content: center;
+  transition: background 0.2s ease, transform 0.1s ease;
+}
+
+.btn-new-chat:hover {
+  background: #535bf2;
+}
+
+.btn-new-chat:active {
+  transform: scale(0.98);
+}
+
+/* ── Session list ──────────────────────────────────────────────────── */
+
+.session-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+}
+
+.session-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.session-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.session-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+}
+
+.session-list-empty {
+  padding: 24px 16px;
   text-align: center;
+  color: rgba(255, 255, 255, 0.3);
+  font-size: 0.85rem;
+  line-height: 1.5;
 }
 
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: filter 300ms;
-}
-.logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
-}
-.logo.react:hover {
-  filter: drop-shadow(0 0 2em #61dafbaa);
+/* ── Session item ──────────────────────────────────────────────────── */
+
+.session-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-bottom: 2px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  position: relative;
+  border: 1px solid transparent;
 }
 
-@keyframes logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
+.session-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.session-item.active {
+  background: rgba(100, 108, 255, 0.12);
+  border-color: rgba(100, 108, 255, 0.2);
+}
+
+.session-item-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.session-item-title {
+  font-size: 0.875rem;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.session-item.active .session-item-title {
+  color: #a5a9ff;
+}
+
+.session-item-time {
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.3);
+}
+
+.session-item.active .session-item-time {
+  color: rgba(100, 108, 255, 0.5);
+}
+
+.session-item-actions {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.session-item:hover .session-item-actions,
+.session-item.active .session-item-actions {
+  opacity: 1;
+}
+
+.btn-session-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 0.75rem;
+  transition: all 0.15s ease;
+}
+
+.btn-session-action:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.btn-session-action.delete:hover {
+  background: rgba(255, 80, 80, 0.15);
+  color: #ff5050;
+}
+
+/* ── Session title editing ─────────────────────────────────────────── */
+
+.session-title-input {
+  font-size: 0.875rem;
+  font-weight: 500;
+  padding: 2px 6px;
+  margin: -2px -6px;
+  border-radius: 4px;
+  border: 1px solid #646cff;
+  background: rgba(100, 108, 255, 0.08);
+  color: inherit;
+  width: 100%;
+}
+
+.session-title-input:focus {
+  outline: none;
+}
+
+/* ── Sidebar footer ────────────────────────────────────────────────── */
+
+.sidebar-footer {
+  padding: 12px 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.user-info {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.4);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
+}
+
+.btn-sign-out {
+  background: transparent;
+  color: rgba(255, 255, 255, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 6px 12px;
+  font-size: 0.75rem;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+}
+
+.btn-sign-out:hover {
+  background: rgba(255, 80, 80, 0.1);
+  border-color: rgba(255, 80, 80, 0.3);
+  color: #ff5050;
+}
+
+/* ── Main content area ─────────────────────────────────────────────── */
+
+.main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  min-width: 0;
+}
+
+/* ── Chat header ───────────────────────────────────────────────────── */
+
+.chat-header {
+  padding: 16px 24px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.chat-header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.chat-header-time {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.3);
+}
+
+/* ── Messages area ─────────────────────────────────────────────────── */
+
+.messages-container {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+}
+
+.messages-container::-webkit-scrollbar {
+  width: 6px;
+}
+
+.messages-container::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.messages-container::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+
+.message-bubble {
+  max-width: 70%;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+  border-radius: 12px;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  word-wrap: break-word;
+}
+
+.message-bubble.user {
+  margin-left: auto;
+  background: #646cff;
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+
+.message-bubble.assistant {
+  margin-right: auto;
+  background: rgba(255, 255, 255, 0.06);
+  border-bottom-left-radius: 4px;
+}
+
+.message-bubble.system {
+  margin: 0 auto;
+  background: rgba(255, 200, 50, 0.08);
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.8rem;
+  text-align: center;
+  max-width: 80%;
+}
+
+.message-role {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+  opacity: 0.5;
+}
+
+.message-image {
+  max-width: 100%;
+  border-radius: 8px;
+  margin-top: 8px;
+}
+
+/* ── Empty state ───────────────────────────────────────────────────── */
+
+.empty-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.25);
+  gap: 12px;
+  padding: 40px;
+}
+
+.empty-state-icon {
+  font-size: 3rem;
+  opacity: 0.3;
+}
+
+.empty-state p {
+  font-size: 0.95rem;
+  margin: 0;
+}
+
+.empty-state .hint {
+  font-size: 0.8rem;
+  opacity: 0.6;
+}
+
+/* ── Login page ────────────────────────────────────────────────────── */
+
+.login-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 380px;
+  padding: 40px 32px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+}
+
+.login-card h1 {
+  text-align: center;
+  margin-bottom: 8px;
+  font-size: 1.6rem;
+}
+
+.login-subtitle {
+  text-align: center;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 0.85rem;
+  margin: 0 0 28px;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.login-form input {
+  width: 100%;
+  padding: 12px 14px;
+}
+
+.login-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.login-actions button {
+  flex: 1;
+  padding: 10px;
+}
+
+.btn-primary {
+  background: #646cff;
+  color: #fff;
+  border: none;
+}
+
+.btn-primary:hover {
+  background: #535bf2;
+}
+
+.btn-secondary {
+  background: transparent;
+  color: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+/* ── Loading screen ────────────────────────────────────────────────── */
+
+.loading-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 0.9rem;
+}
+
+.loading-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  border-top-color: #646cff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  margin-right: 10px;
+}
+
+@keyframes spin {
   to {
     transform: rotate(360deg);
   }
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  a:nth-of-type(2) .logo {
-    animation: logo-spin infinite 20s linear;
+/* ── Confirm dialog ────────────────────────────────────────────────── */
+
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.confirm-dialog {
+  background: #2a2a3e;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 24px;
+  max-width: 340px;
+  width: 90%;
+}
+
+.confirm-dialog p {
+  margin: 0 0 20px;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.confirm-dialog-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.btn-danger {
+  background: #ff5050;
+  color: #fff;
+  border: none;
+}
+
+.btn-danger:hover {
+  background: #e04545;
+}
+
+/* ── Light mode overrides ──────────────────────────────────────────── */
+
+@media (prefers-color-scheme: light) {
+  .sidebar {
+    background: rgba(0, 0, 0, 0.02);
+    border-right-color: rgba(0, 0, 0, 0.08);
   }
-}
 
-.card {
-  padding: 2em;
-}
+  .sidebar-header {
+    border-bottom-color: rgba(0, 0, 0, 0.06);
+  }
 
-.read-the-docs {
-  color: #888;
+  .sidebar-title {
+    color: rgba(0, 0, 0, 0.45);
+  }
+
+  .session-item:hover {
+    background: rgba(0, 0, 0, 0.04);
+  }
+
+  .session-item.active {
+    background: rgba(100, 108, 255, 0.08);
+    border-color: rgba(100, 108, 255, 0.15);
+  }
+
+  .session-item-title {
+    color: rgba(0, 0, 0, 0.8);
+  }
+
+  .session-item.active .session-item-title {
+    color: #4e54cc;
+  }
+
+  .session-item-time {
+    color: rgba(0, 0, 0, 0.35);
+  }
+
+  .session-item.active .session-item-time {
+    color: rgba(100, 108, 255, 0.55);
+  }
+
+  .btn-session-action {
+    color: rgba(0, 0, 0, 0.3);
+  }
+
+  .btn-session-action:hover {
+    background: rgba(0, 0, 0, 0.06);
+    color: rgba(0, 0, 0, 0.7);
+  }
+
+  .session-title-input {
+    background: rgba(100, 108, 255, 0.05);
+  }
+
+  .sidebar-footer {
+    border-top-color: rgba(0, 0, 0, 0.06);
+  }
+
+  .user-info {
+    color: rgba(0, 0, 0, 0.45);
+  }
+
+  .btn-sign-out {
+    color: rgba(0, 0, 0, 0.45);
+    border-color: rgba(0, 0, 0, 0.12);
+  }
+
+  .chat-header {
+    border-bottom-color: rgba(0, 0, 0, 0.06);
+  }
+
+  .chat-header-time {
+    color: rgba(0, 0, 0, 0.35);
+  }
+
+  .message-bubble.assistant {
+    background: rgba(0, 0, 0, 0.04);
+  }
+
+  .message-bubble.system {
+    background: rgba(255, 200, 50, 0.08);
+    color: rgba(0, 0, 0, 0.5);
+  }
+
+  .empty-state {
+    color: rgba(0, 0, 0, 0.25);
+  }
+
+  .login-card {
+    background: rgba(0, 0, 0, 0.02);
+    border-color: rgba(0, 0, 0, 0.08);
+  }
+
+  .login-subtitle {
+    color: rgba(0, 0, 0, 0.45);
+  }
+
+  .btn-secondary {
+    color: rgba(0, 0, 0, 0.6);
+    border-color: rgba(0, 0, 0, 0.15);
+  }
+
+  .btn-secondary:hover {
+    background: rgba(0, 0, 0, 0.03);
+    border-color: rgba(0, 0, 0, 0.25);
+  }
+
+  .loading-screen {
+    color: rgba(0, 0, 0, 0.4);
+  }
+
+  .loading-spinner {
+    border-color: rgba(0, 0, 0, 0.1);
+    border-top-color: #646cff;
+  }
+
+  .session-list-empty {
+    color: rgba(0, 0, 0, 0.35);
+  }
+
+  .confirm-dialog {
+    background: #fff;
+    border-color: rgba(0, 0, 0, 0.1);
+  }
 }
