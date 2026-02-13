@@ -1,7 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import type { User } from "@supabase/supabase-js";
 import { supabase } from "./lib/supabase";
 import type { ChatSession, ChatMessage } from "./lib/database.types";
 import "./App.css";
+
+// ── Types ───────────────────────────────────────────────────────────
+
+/** Shape returned by our Tauri screenshot / file-picker commands. */
+interface Base64Image {
+  data: string;
+  mime_type: string;
+}
+
+/** A pending image attachment before the message is sent. */
+interface PendingImage {
+  id: string;
+  base64: string;
+  mimeType: string;
+  preview: string; // data-URL for display
+}
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -26,10 +44,49 @@ function formatTime(iso: string): string {
   });
 }
 
+/** Convert a base64 string + MIME type into a data-URL for preview. */
+function toDataUrl(base64: string, mimeType: string): string {
+  return `data:${mimeType};base64,${base64}`;
+}
+
+/** Generate a unique id for pending image tracking. */
+let _imgCounter = 0;
+function nextImageId(): string {
+  return `img-${Date.now()}-${++_imgCounter}`;
+}
+
+// ── Supabase Storage helpers ────────────────────────────────────────
+
+const STORAGE_BUCKET = "chat-images";
+
+/** Upload a base64-encoded image to Supabase Storage and return its public URL. */
+async function uploadImageToStorage(
+  base64: string,
+  mimeType: string,
+  userId: string
+): Promise<string> {
+  // Convert base64 to Uint8Array
+  const raw = atob(base64);
+  const bytes = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+
+  const ext = mimeType.split("/")[1]?.replace("jpeg", "jpg") ?? "png";
+  const filePath = `${userId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+
+  const { error: uploadError } = await supabase.storage
+    .from(STORAGE_BUCKET)
+    .upload(filePath, bytes, { contentType: mimeType, upsert: false });
+
+  if (uploadError) throw new Error(`Upload failed: ${uploadError.message}`);
+
+  const { data } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(filePath);
+  return data.publicUrl;
+}
+
 // ── App ─────────────────────────────────────────────────────────────
 
 function App() {
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
   const [email, setEmail] = useState("");
@@ -39,64 +96,22 @@ function App() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
 
+  // Chat input state
+  const [messageInput, setMessageInput] = useState("");
+  const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
+  const [sending, setSending] = useState(false);
+
   // UI state
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(
     null
   );
+  const [imageModalUrl, setImageModalUrl] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
-
-  // ── Auth state ──────────────────────────────────────────────────────
-  useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
-      setUser(data.user);
-      setLoading(false);
-    });
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
-
-  // ── Load sessions when user signs in ────────────────────────────────
-  useEffect(() => {
-    if (user) {
-      loadSessions();
-    } else {
-      setSessions([]);
-      setActiveSessionId(null);
-      setMessages([]);
-    }
-  }, [user]);
-
-  // ── Load messages when active session changes ───────────────────────
-  useEffect(() => {
-    if (activeSessionId) {
-      loadMessages(activeSessionId);
-    } else {
-      setMessages([]);
-    }
-  }, [activeSessionId]);
-
-  // ── Auto-scroll messages ────────────────────────────────────────────
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
-
-  // ── Focus title input when editing ──────────────────────────────────
-  useEffect(() => {
-    if (editingSessionId && editInputRef.current) {
-      editInputRef.current.focus();
-      editInputRef.current.select();
-    }
-  }, [editingSessionId]);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // ── Auth helpers ────────────────────────────────────────────────────
   const signIn = async () => {
@@ -133,8 +148,64 @@ function App() {
     setSessions(data ?? []);
   }, [user]);
 
+  // ── Auth state ──────────────────────────────────────────────────────
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      setUser(data.user);
+      setLoading(false);
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // ── Load sessions when user signs in ────────────────────────────────
+  useEffect(() => {
+    if (user) {
+      loadSessions();
+    } else {
+      setSessions([]);
+      setActiveSessionId(null);
+      setMessages([]);
+    }
+  }, [user, loadSessions]);
+
+  // ── Load messages when active session changes ───────────────────────
+  useEffect(() => {
+    if (activeSessionId) {
+      loadMessages(activeSessionId);
+    } else {
+      setMessages([]);
+    }
+  }, [activeSessionId]);
+
+  // ── Auto-scroll messages ────────────────────────────────────────────
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, sending]);
+
+  // ── Focus title input when editing ──────────────────────────────────
+  useEffect(() => {
+    if (editingSessionId && editInputRef.current) {
+      editInputRef.current.focus();
+      editInputRef.current.select();
+    }
+  }, [editingSessionId]);
+
+  // ── Focus chat input when active session changes ────────────────────
+  useEffect(() => {
+    if (activeSessionId) {
+      setTimeout(() => inputRef.current?.focus(), 50);
+    }
+  }, [activeSessionId]);
+
   const createSession = async (title = "New Chat") => {
-    if (!user) return;
+    if (!user) return null;
 
     const { data, error } = await supabase
       .from("chat_sessions")
@@ -144,11 +215,12 @@ function App() {
 
     if (error) {
       console.error("Failed to create session:", error.message);
-      return;
+      return null;
     }
 
     setSessions((prev) => [data, ...prev]);
     setActiveSessionId(data.id);
+    return data as ChatSession;
   };
 
   const renameSession = async (sessionId: string, newTitle: string) => {
@@ -208,8 +280,7 @@ function App() {
     setMessages(data ?? []);
   };
 
-  // Keep addMessage for future use when message input is implemented
-  const _addMessage = async (
+  const addMessage = async (
     sessionId: string,
     role: ChatMessage["role"],
     content: string,
@@ -232,11 +303,174 @@ function App() {
     }
 
     setMessages((prev) => [...prev, data]);
+
+    // Touch session updated_at
+    await supabase
+      .from("chat_sessions")
+      .update({ updated_at: new Date().toISOString() })
+      .eq("id", sessionId);
+
     return data as ChatMessage;
   };
 
-  // Suppress unused warning — will be wired up when chat input is built
-  void _addMessage;
+  // ── Image attachment handlers ─────────────────────────────────────
+
+  const handleScreenshot = async () => {
+    try {
+      const result = await invoke<Base64Image>("capture_monitor_screenshot", {
+        monitor_index: null,
+      });
+      setPendingImages((prev) => [
+        ...prev,
+        {
+          id: nextImageId(),
+          base64: result.data,
+          mimeType: result.mime_type,
+          preview: toDataUrl(result.data, result.mime_type),
+        },
+      ]);
+    } catch (err) {
+      console.error("Screenshot failed:", err);
+    }
+  };
+
+  const handleImageUpload = async () => {
+    try {
+      const result = await invoke<Base64Image | null>("pick_image_file");
+      if (!result) return; // user cancelled
+      setPendingImages((prev) => [
+        ...prev,
+        {
+          id: nextImageId(),
+          base64: result.data,
+          mimeType: result.mime_type,
+          preview: toDataUrl(result.data, result.mime_type),
+        },
+      ]);
+    } catch (err) {
+      console.error("Image upload failed:", err);
+    }
+  };
+
+  const removePendingImage = (id: string) => {
+    setPendingImages((prev) => prev.filter((img) => img.id !== id));
+  };
+
+  // ── Send message ──────────────────────────────────────────────────
+
+  const sendMessage = async () => {
+    const text = messageInput.trim();
+    if (!text && pendingImages.length === 0) return;
+    if (sending) return;
+
+    setSending(true);
+
+    try {
+      // If no active session, create one (title from first message)
+      let sessionId = activeSessionId;
+      if (!sessionId) {
+        const title = text.slice(0, 50) || "New Chat";
+        const newSession = await createSession(title);
+        if (!newSession) {
+          setSending(false);
+          return;
+        }
+        sessionId = newSession.id;
+      }
+
+      // Upload all pending images and send each as its own message.
+      // The first image is attached to the user's text message; additional
+      // images are sent as separate user messages so no attachment is lost.
+      const imagesToSend = [...pendingImages];
+      const sentImageIds: string[] = [];
+
+      // Upload the first image (attached to the main text message)
+      let firstImageUrl: string | undefined;
+      if (imagesToSend.length > 0 && user) {
+        const img = imagesToSend[0];
+        try {
+          firstImageUrl = await uploadImageToStorage(
+            img.base64,
+            img.mimeType,
+            user.id
+          );
+          sentImageIds.push(img.id);
+        } catch (err) {
+          console.error("Image upload to storage failed:", err);
+          // Fall back to data URL so the image is still visible
+          firstImageUrl = img.preview;
+          sentImageIds.push(img.id);
+        }
+      }
+
+      // Insert the primary user message (text + optional first image)
+      const userMsg = await addMessage(sessionId, "user", text, firstImageUrl);
+      if (!userMsg) {
+        // Clear only successfully sent images so the rest remain pending
+        setPendingImages((prev) =>
+          prev.filter((img) => !sentImageIds.includes(img.id))
+        );
+        setSending(false);
+        return;
+      }
+
+      // Send remaining images as individual messages
+      if (user) {
+        for (let i = 1; i < imagesToSend.length; i++) {
+          const img = imagesToSend[i];
+          let imageUrl: string | undefined;
+          try {
+            imageUrl = await uploadImageToStorage(
+              img.base64,
+              img.mimeType,
+              user.id
+            );
+          } catch (err) {
+            console.error("Image upload to storage failed:", err);
+            imageUrl = img.preview;
+          }
+
+          const msg = await addMessage(sessionId, "user", "", imageUrl);
+          if (msg) {
+            sentImageIds.push(img.id);
+          } else {
+            // Stop sending further images on failure; keep unsent ones pending
+            break;
+          }
+        }
+      }
+
+      // Clear input and only remove successfully sent images
+      setMessageInput("");
+      setPendingImages((prev) =>
+        prev.filter((img) => !sentImageIds.includes(img.id))
+      );
+
+      // Simulate assistant "thinking" then respond
+      // In production, replace this with your AI API call
+      await new Promise((r) => setTimeout(r, 1200));
+
+      await addMessage(
+        sessionId,
+        "assistant",
+        "Thanks for your message! AI responses will be connected soon."
+      );
+
+      // Refresh session list to update timestamps
+      loadSessions();
+    } catch (err) {
+      console.error("Failed to send message:", err);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  };
 
   // ── Derived state ──────────────────────────────────────────────────
   const activeSession = sessions.find((s) => s.id === activeSessionId) ?? null;
@@ -400,34 +634,140 @@ function App() {
               </span>
             </div>
 
+            {/* ── Message list ──────────────────────────────────────── */}
             <div className="messages-container">
-              {messages.length === 0 ? (
+              {messages.length === 0 && !sending ? (
                 <div className="empty-state">
                   <div className="empty-state-icon">💬</div>
                   <p>No messages yet</p>
                   <span className="hint">
-                    This chat session is ready for messages.
+                    Type a message below to start the conversation.
                   </span>
                 </div>
               ) : (
-                messages.map((msg) => (
-                  <div
-                    key={msg.id}
-                    className={`message-bubble ${msg.role}`}
-                  >
-                    <div className="message-role">{msg.role}</div>
-                    {msg.content}
-                    {msg.image_url && (
-                      <img
-                        src={msg.image_url}
-                        alt=""
-                        className="message-image"
-                      />
-                    )}
-                  </div>
-                ))
+                <>
+                  {messages.map((msg) => (
+                    <div
+                      key={msg.id}
+                      className={`message-bubble ${msg.role}`}
+                    >
+                      <div className="message-role">
+                        {msg.role === "user" ? "You" : msg.role}
+                      </div>
+                      {msg.content && (
+                        <div className="message-text">{msg.content}</div>
+                      )}
+                      {msg.image_url && (
+                        <img
+                          src={msg.image_url}
+                          alt="Attached image"
+                          className="message-image"
+                          onClick={() => setImageModalUrl(msg.image_url)}
+                        />
+                      )}
+                      <div className="message-time">
+                        {formatTime(msg.created_at)}
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* Loading indicator */}
+                  {sending && (
+                    <div className="message-bubble assistant">
+                      <div className="message-role">assistant</div>
+                      <div className="typing-indicator">
+                        <span />
+                        <span />
+                        <span />
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
               <div ref={messagesEndRef} />
+            </div>
+
+            {/* ── Chat input bar ────────────────────────────────────── */}
+            <div className="chat-input-bar">
+              {/* Pending image previews */}
+              {pendingImages.length > 0 && (
+                <div className="pending-images">
+                  {pendingImages.map((img) => (
+                    <div key={img.id} className="pending-image-thumb">
+                      <img src={img.preview} alt="Pending attachment" />
+                      <button
+                        className="pending-image-remove"
+                        onClick={() => removePendingImage(img.id)}
+                        title="Remove"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="chat-input-row">
+                {/* Attachment buttons */}
+                <div className="chat-input-actions">
+                  <button
+                    className="btn-input-action"
+                    title="Take screenshot"
+                    onClick={handleScreenshot}
+                    disabled={sending}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
+                      <line x1="8" y1="21" x2="16" y2="21" />
+                      <line x1="12" y1="17" x2="12" y2="21" />
+                    </svg>
+                  </button>
+                  <button
+                    className="btn-input-action"
+                    title="Upload image"
+                    onClick={handleImageUpload}
+                    disabled={sending}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                      <circle cx="8.5" cy="8.5" r="1.5" />
+                      <polyline points="21 15 16 10 5 21" />
+                    </svg>
+                  </button>
+                </div>
+
+                {/* Text input */}
+                <textarea
+                  ref={inputRef}
+                  className="chat-textarea"
+                  placeholder="Type a message..."
+                  value={messageInput}
+                  onChange={(e) => setMessageInput(e.target.value)}
+                  onKeyDown={handleInputKeyDown}
+                  disabled={sending}
+                  rows={1}
+                />
+
+                {/* Send button */}
+                <button
+                  className="btn-send"
+                  onClick={sendMessage}
+                  disabled={
+                    sending ||
+                    (!messageInput.trim() && pendingImages.length === 0)
+                  }
+                  title="Send message"
+                >
+                  {sending ? (
+                    <div className="loading-spinner small" />
+                  ) : (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <line x1="22" y1="2" x2="11" y2="13" />
+                      <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                    </svg>
+                  )}
+                </button>
+              </div>
             </div>
           </>
         ) : (
@@ -440,6 +780,24 @@ function App() {
           </div>
         )}
       </main>
+
+      {/* ── Image lightbox modal ─────────────────────────────────────── */}
+      {imageModalUrl && (
+        <div
+          className="confirm-overlay"
+          onClick={() => setImageModalUrl(null)}
+        >
+          <div className="image-modal" onClick={(e) => e.stopPropagation()}>
+            <img src={imageModalUrl} alt="Full size" />
+            <button
+              className="image-modal-close"
+              onClick={() => setImageModalUrl(null)}
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── Delete confirmation dialog ───────────────────────────────── */}
       {deletingSessionId && (
