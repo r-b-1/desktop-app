@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "./lib/supabase";
 import type { ChatSession, ChatMessage } from "./lib/database.types";
+import { streamChatCompletion } from "./lib/openai";
 import "./App.css";
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -83,6 +84,11 @@ async function uploadImageToStorage(
   return data.publicUrl;
 }
 
+// ── OpenAI configuration ────────────────────────────────────────────
+
+const SYSTEM_PROMPT =
+  "You are a helpful, knowledgeable assistant. Be concise and informative in your responses.";
+
 // ── App ─────────────────────────────────────────────────────────────
 
 function App() {
@@ -100,6 +106,7 @@ function App() {
   const [messageInput, setMessageInput] = useState("");
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   const [sending, setSending] = useState(false);
+  const [streamingContent, setStreamingContent] = useState("");
 
   // UI state
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
@@ -112,6 +119,11 @@ function App() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Ref mirrors activeSessionId so async closures always see the latest value
+  const activeSessionIdRef = useRef<string | null>(null);
+  // Tracks which session the in-flight send belongs to
+  const sendingSessionIdRef = useRef<string | null>(null);
 
   // ── Auth helpers ────────────────────────────────────────────────────
   const signIn = async () => {
@@ -175,6 +187,11 @@ function App() {
     }
   }, [user, loadSessions]);
 
+  // ── Keep activeSessionIdRef in sync with state ─────────────────────
+  useEffect(() => {
+    activeSessionIdRef.current = activeSessionId;
+  }, [activeSessionId]);
+
   // ── Load messages when active session changes ───────────────────────
   useEffect(() => {
     if (activeSessionId) {
@@ -187,7 +204,7 @@ function App() {
   // ── Auto-scroll messages ────────────────────────────────────────────
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, sending]);
+  }, [messages, sending, streamingContent]);
 
   // ── Focus title input when editing ──────────────────────────────────
   useEffect(() => {
@@ -302,7 +319,12 @@ function App() {
       return null;
     }
 
-    setMessages((prev) => [...prev, data]);
+    // Only update local message state if the message belongs to the
+    // currently active session; otherwise it will be loaded when the
+    // user navigates back to that session.
+    if (sessionId === activeSessionIdRef.current) {
+      setMessages((prev) => [...prev, data]);
+    }
 
     // Touch session updated_at
     await supabase
@@ -364,6 +386,7 @@ function App() {
     if (sending) return;
 
     setSending(true);
+    setStreamingContent("");
 
     try {
       // If no active session, create one (title from first message)
@@ -383,6 +406,7 @@ function App() {
       // images are sent as separate user messages so no attachment is lost.
       const imagesToSend = [...pendingImages];
       const sentImageIds: string[] = [];
+      const additionalImageUrls: (string | undefined)[] = [];
 
       // Upload the first image (attached to the main text message)
       let firstImageUrl: string | undefined;
@@ -433,6 +457,7 @@ function App() {
           const msg = await addMessage(sessionId, "user", "", imageUrl);
           if (msg) {
             sentImageIds.push(img.id);
+            additionalImageUrls.push(imageUrl);
           } else {
             // Stop sending further images on failure; keep unsent ones pending
             break;
@@ -446,15 +471,60 @@ function App() {
         prev.filter((img) => !sentImageIds.includes(img.id))
       );
 
-      // Simulate assistant "thinking" then respond
-      // In production, replace this with your AI API call
-      await new Promise((r) => setTimeout(r, 1200));
+      // Pin the session ID for this in-flight request so the streaming
+      // indicator and token updates are scoped to the correct session.
+      sendingSessionIdRef.current = sessionId;
 
-      await addMessage(
-        sessionId,
-        "assistant",
-        "Thanks for your message! AI responses will be connected soon."
+      // Build conversation context for OpenAI from existing messages
+      // plus the ones we just sent (state hasn't re-rendered yet)
+      const contextMessages: Array<{
+        role: string;
+        content: string;
+        image_url?: string | null;
+      }> = [
+        ...messages.map((m) => ({
+          role: m.role,
+          content: m.content,
+          image_url: m.image_url,
+        })),
+        // Primary user message sent above
+        { role: "user", content: text, image_url: firstImageUrl ?? null },
+        // Any additional image-only messages
+        ...additionalImageUrls.map((url) => ({
+          role: "user" as const,
+          content: "",
+          image_url: url ?? null,
+        })),
+      ];
+
+      // Stream AI response from OpenAI
+      let aiResponseText = "";
+
+      await streamChatCompletion(
+        contextMessages,
+        {
+          onToken: (token) => {
+            // Only push streaming tokens to the UI when the user is still
+            // viewing the session that originated this request.
+            if (activeSessionIdRef.current === sendingSessionIdRef.current) {
+              setStreamingContent((prev) => prev + token);
+            }
+          },
+          onComplete: (fullText) => {
+            aiResponseText = fullText;
+          },
+          onError: (error) => {
+            console.error("OpenAI streaming error:", error.message);
+            aiResponseText = `Sorry, I wasn't able to respond — ${error.message}`;
+          },
+        },
+        { systemPrompt: SYSTEM_PROMPT }
       );
+
+      // Save the AI response to Supabase (updates session timestamp too)
+      if (aiResponseText) {
+        await addMessage(sessionId, "assistant", aiResponseText);
+      }
 
       // Refresh session list to update timestamps
       loadSessions();
@@ -462,6 +532,8 @@ function App() {
       console.error("Failed to send message:", err);
     } finally {
       setSending(false);
+      setStreamingContent("");
+      sendingSessionIdRef.current = null;
     }
   };
 
@@ -671,15 +743,20 @@ function App() {
                     </div>
                   ))}
 
-                  {/* Loading indicator */}
-                  {sending && (
+                  {/* Streaming response / typing indicator — only show
+                      when the active session is the one being streamed into */}
+                  {sending && activeSessionId === sendingSessionIdRef.current && (
                     <div className="message-bubble assistant">
                       <div className="message-role">assistant</div>
-                      <div className="typing-indicator">
-                        <span />
-                        <span />
-                        <span />
-                      </div>
+                      {streamingContent ? (
+                        <div className="message-text">{streamingContent}</div>
+                      ) : (
+                        <div className="typing-indicator">
+                          <span />
+                          <span />
+                          <span />
+                        </div>
+                      )}
                     </div>
                   )}
                 </>
