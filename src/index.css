@@ -1,11 +1,61 @@
+/* ── CSS Custom Properties ────────────────────────────────────────── */
+
 :root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+  /* Colors – dark mode (default) */
+  --bg-primary: #121220;
+  --bg-secondary: #16162a;
+  --bg-surface: rgba(255, 255, 255, 0.03);
+  --bg-surface-hover: rgba(255, 255, 255, 0.06);
+  --bg-surface-active: rgba(255, 255, 255, 0.09);
+
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-default: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(255, 255, 255, 0.15);
+
+  --text-primary: rgba(255, 255, 255, 0.92);
+  --text-secondary: rgba(255, 255, 255, 0.6);
+  --text-tertiary: rgba(255, 255, 255, 0.38);
+  --text-inverse: #fff;
+
+  --accent: #646cff;
+  --accent-hover: #535bf2;
+  --accent-soft: rgba(100, 108, 255, 0.12);
+  --accent-softer: rgba(100, 108, 255, 0.06);
+  --accent-text: #a5a9ff;
+
+  --danger: #ff5050;
+  --danger-soft: rgba(255, 80, 80, 0.12);
+  --danger-text: #ff7070;
+
+  --user-bubble: linear-gradient(135deg, #646cff 0%, #535bf2 100%);
+  --assistant-bubble: rgba(255, 255, 255, 0.05);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.25);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.4);
+  --shadow-overlay: 0 16px 48px rgba(0, 0, 0, 0.5);
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+  --radius-full: 9999px;
+
+  --sidebar-width: 280px;
+
+  --transition-fast: 0.12s ease;
+  --transition-default: 0.2s ease;
+  --transition-slow: 0.3s ease;
+
+  /* Typography */
+  font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, Helvetica, Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
 
   color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #1a1a2e;
+  color: var(--text-primary);
+  background-color: var(--bg-primary);
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -13,25 +63,23 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* ── Reset & Base ────────────────────────────────────────────────── */
+
 *,
 *::before,
 *::after {
   box-sizing: border-box;
 }
 
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-a:hover {
-  color: #535bf2;
+html {
+  scroll-behavior: smooth;
 }
 
 body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  overflow: hidden;
 }
 
 #root {
@@ -48,56 +96,133 @@ h1 {
   margin: 0;
 }
 
+/* ── Links ────────────────────────────────────────────────────────── */
+
+a {
+  font-weight: 500;
+  color: var(--accent);
+  text-decoration: inherit;
+}
+
+a:hover {
+  color: var(--accent-hover);
+}
+
+/* ── Buttons ──────────────────────────────────────────────────────── */
+
 button {
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   border: 1px solid transparent;
   padding: 0.5em 1em;
   font-size: 0.875em;
   font-weight: 500;
   font-family: inherit;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--transition-default);
 }
 
-button:focus,
 button:focus-visible {
-  outline: 2px solid #646cff;
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
+/* Remove default focus ring for mouse clicks */
+button:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* ── Inputs ───────────────────────────────────────────────────────── */
+
 input {
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-strong);
   padding: 0.6em 0.8em;
   font-size: 0.875em;
   font-family: inherit;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--bg-surface);
   color: inherit;
-  transition: border-color 0.2s ease;
+  transition: border-color var(--transition-default), box-shadow var(--transition-default);
 }
 
 input:focus {
   outline: none;
-  border-color: #646cff;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-softer);
 }
 
 input::placeholder {
-  color: rgba(255, 255, 255, 0.35);
+  color: var(--text-tertiary);
 }
+
+/* ── Selection ────────────────────────────────────────────────────── */
+
+::selection {
+  background: rgba(100, 108, 255, 0.3);
+  color: inherit;
+}
+
+/* ── Scrollbar base ──────────────────────────────────────────────── */
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+/* ── Light mode ──────────────────────────────────────────────────── */
 
 @media (prefers-color-scheme: light) {
   :root {
-    color: #213547;
-    background-color: #f8f9fa;
+    --bg-primary: #f5f6f8;
+    --bg-secondary: #ffffff;
+    --bg-surface: rgba(0, 0, 0, 0.025);
+    --bg-surface-hover: rgba(0, 0, 0, 0.045);
+    --bg-surface-active: rgba(0, 0, 0, 0.07);
+
+    --border-subtle: rgba(0, 0, 0, 0.06);
+    --border-default: rgba(0, 0, 0, 0.1);
+    --border-strong: rgba(0, 0, 0, 0.15);
+
+    --text-primary: #1a1a2e;
+    --text-secondary: rgba(0, 0, 0, 0.55);
+    --text-tertiary: rgba(0, 0, 0, 0.35);
+    --text-inverse: #fff;
+
+    --accent-soft: rgba(100, 108, 255, 0.08);
+    --accent-softer: rgba(100, 108, 255, 0.04);
+    --accent-text: #4e54cc;
+
+    --danger-soft: rgba(255, 80, 80, 0.08);
+    --danger-text: #d44;
+
+    --assistant-bubble: rgba(0, 0, 0, 0.035);
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
+    --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.1);
+    --shadow-overlay: 0 16px 48px rgba(0, 0, 0, 0.15);
+
+    color: var(--text-primary);
+    background-color: var(--bg-primary);
   }
-  a:hover {
-    color: #747bff;
+
+  ::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.1);
   }
-  input {
-    border-color: rgba(0, 0, 0, 0.15);
-    background: rgba(0, 0, 0, 0.03);
-  }
-  input::placeholder {
-    color: rgba(0, 0, 0, 0.4);
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 0, 0, 0.18);
   }
 }

@@ -87,7 +87,7 @@ async function uploadImageToStorage(
 // ── OpenAI configuration ────────────────────────────────────────────
 
 const SYSTEM_PROMPT =
-  "You are a helpful, knowledgeable assistant. Be concise and informative in your responses.";
+  "You are GPT-4o mini, a helpful and knowledgeable AI assistant. Be concise and informative in your responses. When asked about your identity, identify yourself as GPT-4o mini.";
 
 // ── App ─────────────────────────────────────────────────────────────
 
@@ -115,8 +115,12 @@ function App() {
     null
   );
   const [imageModalUrl, setImageModalUrl] = useState<string | null>(null);
+  const [imageZoomed, setImageZoomed] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -195,16 +199,48 @@ function App() {
   // ── Load messages when active session changes ───────────────────────
   useEffect(() => {
     if (activeSessionId) {
-      loadMessages(activeSessionId);
+      loadMessages(activeSessionId).then(() => {
+        // Force scroll to the newest messages after history loads.
+        // setTimeout ensures the DOM has updated with the new messages
+        // before we attempt to scroll.
+        setTimeout(() => scrollToBottom(true), 0);
+      });
     } else {
       setMessages([]);
     }
   }, [activeSessionId]);
 
   // ── Auto-scroll messages ────────────────────────────────────────────
+
+  /**
+   * Scroll the messages container to the bottom.
+   * When `force` is true the scroll happens unconditionally (used after
+   * loading a session's history so the user sees the newest messages).
+   * Without `force`, the scroll is only performed when the user is
+   * already near the bottom (within 150 px) to avoid yanking them away
+   * from older content they are reading.
+   */
+  const scrollToBottom = useCallback((force?: boolean) => {
+    const container = messagesContainerRef.current;
+    if (!container) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      return;
+    }
+    if (force) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      return;
+    }
+    const { scrollTop, scrollHeight, clientHeight } = container;
+    const isNearBottom = scrollHeight - scrollTop - clientHeight < 150;
+    if (isNearBottom) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, []);
+
+  // Scroll (non-forced) when messages change or streaming content updates.
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, sending, streamingContent]);
+    scrollToBottom();
+  }, [messages, sending, streamingContent, scrollToBottom]);
 
   // ── Focus title input when editing ──────────────────────────────────
   useEffect(() => {
@@ -530,6 +566,9 @@ function App() {
       loadSessions();
     } catch (err) {
       console.error("Failed to send message:", err);
+      setErrorMessage(
+        err instanceof Error ? err.message : "Failed to send message. Please try again."
+      );
     } finally {
       setSending(false);
       setStreamingContent("");
@@ -544,6 +583,23 @@ function App() {
     }
   };
 
+  // ── UI helpers ──────────────────────────────────────────────────────
+  const selectSession = (sessionId: string) => {
+    setActiveSessionId(sessionId);
+    setSidebarOpen(false); // close sidebar on mobile
+  };
+
+  const openImageModal = (url: string | null) => {
+    if (!url) return;
+    setImageModalUrl(url);
+    setImageZoomed(false);
+  };
+
+  const closeImageModal = () => {
+    setImageModalUrl(null);
+    setImageZoomed(false);
+  };
+
   // ── Derived state ──────────────────────────────────────────────────
   const activeSession = sessions.find((s) => s.id === activeSessionId) ?? null;
 
@@ -552,7 +608,7 @@ function App() {
     return (
       <div className="loading-screen">
         <div className="loading-spinner" />
-        Loading...
+        <span>Loading your chats…</span>
       </div>
     );
   }
@@ -597,8 +653,16 @@ function App() {
   // ── Render: Main app ────────────────────────────────────────────────
   return (
     <div className="app-layout">
+      {/* ── Sidebar overlay (mobile) ──────────────────────────────── */}
+      {sidebarOpen && (
+        <div
+          className="sidebar-overlay"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
       {/* ── Sidebar ──────────────────────────────────────────────────── */}
-      <aside className="sidebar">
+      <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
         <div className="sidebar-header">
           <div className="sidebar-header-top">
             <span className="sidebar-title">Chats</span>
@@ -623,7 +687,7 @@ function App() {
                 className={`session-item ${
                   session.id === activeSessionId ? "active" : ""
                 }`}
-                onClick={() => setActiveSessionId(session.id)}
+                onClick={() => selectSession(session.id)}
               >
                 <div className="session-item-content">
                   {editingSessionId === session.id ? (
@@ -700,14 +764,40 @@ function App() {
         {activeSession ? (
           <>
             <div className="chat-header">
+              <button
+                className="btn-sidebar-toggle"
+                onClick={() => setSidebarOpen((prev) => !prev)}
+                title="Toggle sidebar"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="3" y1="6" x2="21" y2="6" />
+                  <line x1="3" y1="12" x2="21" y2="12" />
+                  <line x1="3" y1="18" x2="21" y2="18" />
+                </svg>
+              </button>
               <h2>{activeSession.title}</h2>
               <span className="chat-header-time">
                 Created {formatTime(activeSession.created_at)}
               </span>
             </div>
 
+            {/* ── Error banner ──────────────────────────────────────── */}
+            {errorMessage && (
+              <div className="error-banner">
+                <span className="error-banner-icon">⚠</span>
+                <span className="error-banner-text">{errorMessage}</span>
+                <button
+                  className="error-banner-dismiss"
+                  onClick={() => setErrorMessage(null)}
+                  title="Dismiss"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+
             {/* ── Message list ──────────────────────────────────────── */}
-            <div className="messages-container">
+            <div className="messages-container" ref={messagesContainerRef}>
               {messages.length === 0 && !sending ? (
                 <div className="empty-state">
                   <div className="empty-state-icon">💬</div>
@@ -734,7 +824,7 @@ function App() {
                           src={msg.image_url}
                           alt="Attached image"
                           className="message-image"
-                          onClick={() => setImageModalUrl(msg.image_url)}
+                          onClick={() => openImageModal(msg.image_url)}
                         />
                       )}
                       <div className="message-time">
@@ -848,30 +938,54 @@ function App() {
             </div>
           </>
         ) : (
-          <div className="empty-state">
-            <div className="empty-state-icon">💬</div>
-            <p>Select a conversation or start a new chat</p>
-            <span className="hint">
-              Your chat sessions appear in the sidebar
-            </span>
-          </div>
+          <>
+            <div className="chat-header">
+              <button
+                className="btn-sidebar-toggle"
+                onClick={() => setSidebarOpen((prev) => !prev)}
+                title="Toggle sidebar"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="3" y1="6" x2="21" y2="6" />
+                  <line x1="3" y1="12" x2="21" y2="12" />
+                  <line x1="3" y1="18" x2="21" y2="18" />
+                </svg>
+              </button>
+            </div>
+            <div className="empty-state">
+              <div className="empty-state-icon">💬</div>
+              <p>Select a conversation or start a new chat</p>
+              <span className="hint">
+                Your chat sessions appear in the sidebar
+              </span>
+            </div>
+          </>
         )}
       </main>
 
-      {/* ── Image lightbox modal ─────────────────────────────────────── */}
+      {/* ── Image lightbox modal with zoom ───────────────────────────── */}
       {imageModalUrl && (
         <div
-          className="confirm-overlay"
-          onClick={() => setImageModalUrl(null)}
+          className="image-modal-overlay"
+          onClick={closeImageModal}
         >
           <div className="image-modal" onClick={(e) => e.stopPropagation()}>
-            <img src={imageModalUrl} alt="Full size" />
+            <img
+              src={imageModalUrl}
+              alt="Full size"
+              className={imageZoomed ? "zoomed" : ""}
+              onClick={() => setImageZoomed((z) => !z)}
+              draggable={false}
+            />
             <button
               className="image-modal-close"
-              onClick={() => setImageModalUrl(null)}
+              onClick={closeImageModal}
             >
               ✕
             </button>
+            <div className="image-modal-hint">
+              {imageZoomed ? "Click to zoom out" : "Click image to zoom in"}
+            </div>
           </div>
         </div>
       )}
