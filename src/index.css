@@ -1,69 +1,76 @@
-/* ── CSS Custom Properties ────────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════════
+   index.css – Global Design System
+   Aesthetic: Warm Noir – copper accents on deep charcoal
+   ═══════════════════════════════════════════════════════════════════ */
+
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Outfit:wght@300;400;500;600;700&display=swap');
 
 :root {
-  /* Colors – dark mode (default) */
-  --bg-primary: #121220;
-  --bg-secondary: #16162a;
-  --bg-surface: rgba(255, 255, 255, 0.03);
-  --bg-surface-hover: rgba(255, 255, 255, 0.06);
-  --bg-surface-active: rgba(255, 255, 255, 0.09);
+  /* Typography */
+  --font-body: 'Outfit', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-display: 'Instrument Serif', Georgia, 'Times New Roman', serif;
+
+  /* Palette – Dark (default) */
+  --bg-primary: #0c0c0e;
+  --bg-secondary: #131316;
+  --bg-elevated: #1a1a1e;
+  --bg-surface: rgba(255, 255, 255, 0.04);
+  --bg-surface-hover: rgba(255, 255, 255, 0.07);
+  --bg-surface-active: rgba(255, 255, 255, 0.10);
 
   --border-subtle: rgba(255, 255, 255, 0.06);
-  --border-default: rgba(255, 255, 255, 0.1);
-  --border-strong: rgba(255, 255, 255, 0.15);
+  --border-default: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.14);
 
-  --text-primary: rgba(255, 255, 255, 0.92);
-  --text-secondary: rgba(255, 255, 255, 0.6);
-  --text-tertiary: rgba(255, 255, 255, 0.38);
-  --text-inverse: #fff;
+  --text-primary: #ece8e1;
+  --text-secondary: #9e9890;
+  --text-tertiary: #5e5a54;
+  --text-inverse: #ffffff;
 
-  --accent: #646cff;
-  --accent-hover: #535bf2;
-  --accent-soft: rgba(100, 108, 255, 0.12);
-  --accent-softer: rgba(100, 108, 255, 0.06);
-  --accent-text: #a5a9ff;
+  --accent: #d4874d;
+  --accent-hover: #c47a42;
+  --accent-soft: rgba(212, 135, 77, 0.12);
+  --accent-softer: rgba(212, 135, 77, 0.06);
+  --accent-text: #e0995e;
+  --accent-glow: 0 0 24px rgba(212, 135, 77, 0.12);
 
-  --danger: #ff5050;
-  --danger-soft: rgba(255, 80, 80, 0.12);
-  --danger-text: #ff7070;
+  --danger: #e85454;
+  --danger-soft: rgba(232, 84, 84, 0.10);
+  --danger-text: #f07070;
 
-  --user-bubble: linear-gradient(135deg, #646cff 0%, #535bf2 100%);
-  --assistant-bubble: rgba(255, 255, 255, 0.05);
+  --user-bubble: linear-gradient(135deg, #d4874d 0%, #b56c32 100%);
+  --assistant-bubble: rgba(255, 255, 255, 0.03);
 
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.25);
-  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.4);
-  --shadow-overlay: 0 16px 48px rgba(0, 0, 0, 0.5);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.25);
+  --shadow-md: 0 4px 20px rgba(0, 0, 0, 0.30);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.40);
+  --shadow-overlay: 0 24px 64px rgba(0, 0, 0, 0.50);
 
   --radius-sm: 6px;
   --radius-md: 10px;
-  --radius-lg: 14px;
-  --radius-xl: 18px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
   --radius-full: 9999px;
 
   --sidebar-width: 280px;
 
-  --transition-fast: 0.12s ease;
+  --transition-fast: 0.1s ease;
   --transition-default: 0.2s ease;
-  --transition-slow: 0.3s ease;
+  --transition-slow: 0.35s cubic-bezier(0.22, 1, 0.36, 1);
 
-  /* Typography */
-  font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    Roboto, Helvetica, Arial, sans-serif;
+  font-family: var(--font-body);
   line-height: 1.5;
   font-weight: 400;
-
-  color-scheme: light dark;
+  color-scheme: dark;
   color: var(--text-primary);
   background-color: var(--bg-primary);
-
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* ── Reset & Base ────────────────────────────────────────────────── */
+/* ── Reset ──────────────────────────────────────────────────────── */
 
 *,
 *::before,
@@ -96,19 +103,17 @@ h1 {
   margin: 0;
 }
 
-/* ── Links ────────────────────────────────────────────────────────── */
+/* ── Base elements ──────────────────────────────────────────────── */
 
 a {
   font-weight: 500;
   color: var(--accent);
-  text-decoration: inherit;
+  text-decoration: none;
 }
 
 a:hover {
   color: var(--accent-hover);
 }
-
-/* ── Buttons ──────────────────────────────────────────────────────── */
 
 button {
   border-radius: var(--radius-md);
@@ -126,12 +131,9 @@ button:focus-visible {
   outline-offset: 2px;
 }
 
-/* Remove default focus ring for mouse clicks */
 button:focus:not(:focus-visible) {
   outline: none;
 }
-
-/* ── Inputs ───────────────────────────────────────────────────────── */
 
 input {
   border-radius: var(--radius-md);
@@ -141,7 +143,8 @@ input {
   font-family: inherit;
   background: var(--bg-surface);
   color: inherit;
-  transition: border-color var(--transition-default), box-shadow var(--transition-default);
+  transition: border-color var(--transition-default),
+    box-shadow var(--transition-default);
 }
 
 input:focus {
@@ -154,14 +157,12 @@ input::placeholder {
   color: var(--text-tertiary);
 }
 
-/* ── Selection ────────────────────────────────────────────────────── */
-
 ::selection {
-  background: rgba(100, 108, 255, 0.3);
+  background: rgba(212, 135, 77, 0.30);
   color: inherit;
 }
 
-/* ── Scrollbar base ──────────────────────────────────────────────── */
+/* ── Scrollbars ─────────────────────────────────────────────────── */
 
 ::-webkit-scrollbar {
   width: 6px;
@@ -173,53 +174,58 @@ input::placeholder {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.07);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.13);
 }
 
-/* ── Light mode ──────────────────────────────────────────────────── */
+/* ── Light mode ─────────────────────────────────────────────────── */
 
 @media (prefers-color-scheme: light) {
   :root {
-    --bg-primary: #f5f6f8;
+    --bg-primary: #f6f4f0;
     --bg-secondary: #ffffff;
-    --bg-surface: rgba(0, 0, 0, 0.025);
-    --bg-surface-hover: rgba(0, 0, 0, 0.045);
-    --bg-surface-active: rgba(0, 0, 0, 0.07);
+    --bg-elevated: #faf9f7;
+    --bg-surface: rgba(0, 0, 0, 0.03);
+    --bg-surface-hover: rgba(0, 0, 0, 0.05);
+    --bg-surface-active: rgba(0, 0, 0, 0.08);
 
     --border-subtle: rgba(0, 0, 0, 0.06);
-    --border-default: rgba(0, 0, 0, 0.1);
+    --border-default: rgba(0, 0, 0, 0.10);
     --border-strong: rgba(0, 0, 0, 0.15);
 
-    --text-primary: #1a1a2e;
+    --text-primary: #1a1815;
     --text-secondary: rgba(0, 0, 0, 0.55);
-    --text-tertiary: rgba(0, 0, 0, 0.35);
-    --text-inverse: #fff;
+    --text-tertiary: rgba(0, 0, 0, 0.32);
+    --text-inverse: #ffffff;
 
-    --accent-soft: rgba(100, 108, 255, 0.08);
-    --accent-softer: rgba(100, 108, 255, 0.04);
-    --accent-text: #4e54cc;
+    --accent: #b87530;
+    --accent-hover: #a56828;
+    --accent-soft: rgba(184, 117, 48, 0.10);
+    --accent-softer: rgba(184, 117, 48, 0.05);
+    --accent-text: #96611e;
+    --accent-glow: 0 0 24px rgba(184, 117, 48, 0.06);
 
-    --danger-soft: rgba(255, 80, 80, 0.08);
-    --danger-text: #d44;
+    --danger-soft: rgba(232, 84, 84, 0.08);
+    --danger-text: #cc4444;
 
-    --assistant-bubble: rgba(0, 0, 0, 0.035);
+    --assistant-bubble: rgba(0, 0, 0, 0.03);
 
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
-    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
-    --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.1);
-    --shadow-overlay: 0 16px 48px rgba(0, 0, 0, 0.15);
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
+    --shadow-md: 0 4px 20px rgba(0, 0, 0, 0.07);
+    --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.10);
+    --shadow-overlay: 0 24px 64px rgba(0, 0, 0, 0.14);
 
+    color-scheme: light;
     color: var(--text-primary);
     background-color: var(--bg-primary);
   }
 
   ::-webkit-scrollbar-thumb {
-    background: rgba(0, 0, 0, 0.1);
+    background: rgba(0, 0, 0, 0.10);
   }
 
   ::-webkit-scrollbar-thumb:hover {

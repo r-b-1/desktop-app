@@ -119,10 +119,23 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  // Region capture state
+  const [regionCaptureScreenshot, setRegionCaptureScreenshot] = useState<string | null>(null);
+  const [regionSelection, setRegionSelection] = useState({ x: 0, y: 0, width: 400, height: 300 });
+  const [regionDragState, setRegionDragState] = useState<{
+    type: "move" | "resize";
+    handle?: string;
+    startMouseX: number;
+    startMouseY: number;
+    startSelection: { x: number; y: number; width: number; height: number };
+  } | null>(null);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const regionOverlayRef = useRef<HTMLDivElement>(null);
+  const regionImageRef = useRef<HTMLImageElement>(null);
 
   // Ref mirrors activeSessionId so async closures always see the latest value
   const activeSessionIdRef = useRef<string | null>(null);
@@ -378,19 +391,184 @@ function App() {
       const result = await invoke<Base64Image>("capture_monitor_screenshot", {
         monitor_index: null,
       });
-      setPendingImages((prev) => [
-        ...prev,
-        {
-          id: nextImageId(),
-          base64: result.data,
-          mimeType: result.mime_type,
-          preview: toDataUrl(result.data, result.mime_type),
-        },
-      ]);
+      // Open region capture overlay instead of adding directly
+      setRegionCaptureScreenshot(toDataUrl(result.data, result.mime_type));
     } catch (err) {
       console.error("Screenshot failed:", err);
     }
   };
+
+  // ── Region capture handlers ──────────────────────────────────────
+
+  const handleRegionImageLoad = useCallback(() => {
+    const overlay = regionOverlayRef.current;
+    if (!overlay) return;
+    const ow = overlay.clientWidth;
+    const oh = overlay.clientHeight;
+    const w = Math.min(400, ow - 40);
+    const h = Math.min(300, oh - 40);
+    setRegionSelection({
+      x: Math.round((ow - w) / 2),
+      y: Math.round((oh - h) / 2),
+      width: w,
+      height: h,
+    });
+  }, []);
+
+  const handleRegionPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      // Check if clicking on a resize handle
+      const target = e.target as HTMLElement;
+      const handle = target.dataset.handle;
+      if (handle) {
+        e.preventDefault();
+        e.stopPropagation();
+        (e.target as HTMLElement).setPointerCapture(e.pointerId);
+        setRegionDragState({
+          type: "resize",
+          handle,
+          startMouseX: e.clientX,
+          startMouseY: e.clientY,
+          startSelection: { ...regionSelection },
+        });
+        return;
+      }
+
+      // Check if clicking inside the selection frame (for move)
+      const rect = regionOverlayRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      const { x, y, width, height } = regionSelection;
+      if (mx >= x && mx <= x + width && my >= y && my <= y + height) {
+        e.preventDefault();
+        (e.target as HTMLElement).setPointerCapture(e.pointerId);
+        setRegionDragState({
+          type: "move",
+          startMouseX: e.clientX,
+          startMouseY: e.clientY,
+          startSelection: { ...regionSelection },
+        });
+      }
+    },
+    [regionSelection]
+  );
+
+  const handleRegionPointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!regionDragState) return;
+      const overlay = regionOverlayRef.current;
+      if (!overlay) return;
+
+      const ow = overlay.clientWidth;
+      const oh = overlay.clientHeight;
+      const dx = e.clientX - regionDragState.startMouseX;
+      const dy = e.clientY - regionDragState.startMouseY;
+      const s = regionDragState.startSelection;
+      const MIN = 50;
+
+      if (regionDragState.type === "move") {
+        setRegionSelection({
+          x: Math.max(0, Math.min(ow - s.width, s.x + dx)),
+          y: Math.max(0, Math.min(oh - s.height, s.y + dy)),
+          width: s.width,
+          height: s.height,
+        });
+      } else {
+        const h = regionDragState.handle!;
+        let nx = s.x, ny = s.y, nw = s.width, nh = s.height;
+
+        // Horizontal resize
+        if (h.includes("w")) {
+          nw = Math.max(MIN, s.width - dx);
+          nx = s.x + s.width - nw;
+          if (nx < 0) { nw += nx; nx = 0; }
+        }
+        if (h.includes("e")) {
+          nw = Math.max(MIN, s.width + dx);
+          if (nx + nw > ow) nw = ow - nx;
+        }
+
+        // Vertical resize
+        if (h.includes("n")) {
+          nh = Math.max(MIN, s.height - dy);
+          ny = s.y + s.height - nh;
+          if (ny < 0) { nh += ny; ny = 0; }
+        }
+        if (h.includes("s")) {
+          nh = Math.max(MIN, s.height + dy);
+          if (ny + nh > oh) nh = oh - ny;
+        }
+
+        setRegionSelection({ x: nx, y: ny, width: nw, height: nh });
+      }
+    },
+    [regionDragState]
+  );
+
+  const handleRegionPointerUp = useCallback(() => {
+    setRegionDragState(null);
+  }, []);
+
+  const cropRegionFromScreenshot = useCallback((): PendingImage | null => {
+    const img = regionImageRef.current;
+    const overlay = regionOverlayRef.current;
+    if (!img || !overlay) return null;
+
+    // Map display coords to actual image pixel coords (handles HiDPI)
+    const scaleX = img.naturalWidth / overlay.clientWidth;
+    const scaleY = img.naturalHeight / overlay.clientHeight;
+
+    const sx = Math.round(regionSelection.x * scaleX);
+    const sy = Math.round(regionSelection.y * scaleY);
+    const sw = Math.round(regionSelection.width * scaleX);
+    const sh = Math.round(regionSelection.height * scaleY);
+
+    const canvas = document.createElement("canvas");
+    canvas.width = sw;
+    canvas.height = sh;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+
+    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+    const dataUrl = canvas.toDataURL("image/png");
+    const base64 = dataUrl.split(",")[1];
+
+    return {
+      id: nextImageId(),
+      base64,
+      mimeType: "image/png",
+      preview: dataUrl,
+    };
+  }, [regionSelection]);
+
+  const handleRegionCapture = useCallback(() => {
+    const cropped = cropRegionFromScreenshot();
+    if (cropped) {
+      setPendingImages((prev) => [...prev, cropped]);
+    }
+  }, [cropRegionFromScreenshot]);
+
+  const closeRegionCapture = useCallback(() => {
+    setRegionCaptureScreenshot(null);
+    setRegionDragState(null);
+  }, []);
+
+  // ── Region capture keyboard shortcuts ──────────────────────────────
+  useEffect(() => {
+    if (!regionCaptureScreenshot) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeRegionCapture();
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        handleRegionCapture();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [regionCaptureScreenshot, closeRegionCapture, handleRegionCapture]);
 
   const handleImageUpload = async () => {
     try {
@@ -443,9 +621,15 @@ function App() {
       const imagesToSend = [...pendingImages];
       const sentImageIds: string[] = [];
       const additionalImageUrls: (string | undefined)[] = [];
+      // Base64 data URLs for OpenAI (so the model can see images directly
+      // without needing to fetch a remote Supabase Storage URL)
+      const additionalImageDataUrls: string[] = [];
 
       // Upload the first image (attached to the main text message)
       let firstImageUrl: string | undefined;
+      const firstImageDataUrl = imagesToSend.length > 0
+        ? toDataUrl(imagesToSend[0].base64, imagesToSend[0].mimeType)
+        : undefined;
       if (imagesToSend.length > 0 && user) {
         const img = imagesToSend[0];
         try {
@@ -494,6 +678,7 @@ function App() {
           if (msg) {
             sentImageIds.push(img.id);
             additionalImageUrls.push(imageUrl);
+            additionalImageDataUrls.push(toDataUrl(img.base64, img.mimeType));
           } else {
             // Stop sending further images on failure; keep unsent ones pending
             break;
@@ -523,10 +708,11 @@ function App() {
           content: m.content,
           image_url: m.image_url,
         })),
-        // Primary user message sent above
-        { role: "user", content: text, image_url: firstImageUrl ?? null },
+        // Primary user message sent above — use base64 data URL so OpenAI
+        // can see the image directly without fetching a remote URL
+        { role: "user", content: text, image_url: firstImageDataUrl ?? null },
         // Any additional image-only messages
-        ...additionalImageUrls.map((url) => ({
+        ...additionalImageDataUrls.map((url) => ({
           role: "user" as const,
           content: "",
           image_url: url ?? null,
@@ -800,7 +986,11 @@ function App() {
             <div className="messages-container" ref={messagesContainerRef}>
               {messages.length === 0 && !sending ? (
                 <div className="empty-state">
-                  <div className="empty-state-icon">💬</div>
+                  <div className="empty-state-icon">
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                    </svg>
+                  </div>
                   <p>No messages yet</p>
                   <span className="hint">
                     Type a message below to start the conversation.
@@ -814,7 +1004,7 @@ function App() {
                       className={`message-bubble ${msg.role}`}
                     >
                       <div className="message-role">
-                        {msg.role === "user" ? "You" : msg.role}
+                        {msg.role === "user" ? "You" : "AI"}
                       </div>
                       {msg.content && (
                         <div className="message-text">{msg.content}</div>
@@ -837,7 +1027,7 @@ function App() {
                       when the active session is the one being streamed into */}
                   {sending && activeSessionId === sendingSessionIdRef.current && (
                     <div className="message-bubble assistant">
-                      <div className="message-role">assistant</div>
+                      <div className="message-role">AI</div>
                       {streamingContent ? (
                         <div className="message-text">{streamingContent}</div>
                       ) : (
@@ -953,7 +1143,11 @@ function App() {
               </button>
             </div>
             <div className="empty-state">
-              <div className="empty-state-icon">💬</div>
+              <div className="empty-state-icon">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                </svg>
+              </div>
               <p>Select a conversation or start a new chat</p>
               <span className="hint">
                 Your chat sessions appear in the sidebar
@@ -986,6 +1180,95 @@ function App() {
             <div className="image-modal-hint">
               {imageZoomed ? "Click to zoom out" : "Click image to zoom in"}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Region capture overlay ────────────────────────────────────── */}
+      {regionCaptureScreenshot && (
+        <div
+          className="region-capture-overlay"
+          ref={regionOverlayRef}
+          onPointerDown={handleRegionPointerDown}
+          onPointerMove={handleRegionPointerMove}
+          onPointerUp={handleRegionPointerUp}
+        >
+          {/* Full screenshot as background */}
+          <img
+            ref={regionImageRef}
+            src={regionCaptureScreenshot}
+            alt=""
+            className="region-capture-bg"
+            onLoad={handleRegionImageLoad}
+            draggable={false}
+          />
+
+          {/* Dark mask — 4 strips around selection */}
+          <div className="region-mask" style={{ top: 0, left: 0, right: 0, height: regionSelection.y }} />
+          <div className="region-mask" style={{ top: regionSelection.y, left: 0, width: regionSelection.x, height: regionSelection.height }} />
+          <div className="region-mask" style={{ top: regionSelection.y, left: regionSelection.x + regionSelection.width, right: 0, height: regionSelection.height }} />
+          <div className="region-mask" style={{ top: regionSelection.y + regionSelection.height, left: 0, right: 0, bottom: 0 }} />
+
+          {/* Selection frame */}
+          <div
+            className="region-selection-frame"
+            style={{
+              left: regionSelection.x,
+              top: regionSelection.y,
+              width: regionSelection.width,
+              height: regionSelection.height,
+            }}
+          >
+            {/* Resize handles */}
+            <div className="region-handle nw" data-handle="nw" />
+            <div className="region-handle n" data-handle="n" />
+            <div className="region-handle ne" data-handle="ne" />
+            <div className="region-handle w" data-handle="w" />
+            <div className="region-handle e" data-handle="e" />
+            <div className="region-handle sw" data-handle="sw" />
+            <div className="region-handle s" data-handle="s" />
+            <div className="region-handle se" data-handle="se" />
+
+            {/* Dimensions label */}
+            <div className="region-dimensions">
+              {Math.round(regionSelection.width)} x {Math.round(regionSelection.height)}
+            </div>
+          </div>
+
+          {/* Toolbar */}
+          <div
+            className="region-toolbar"
+            style={{
+              left: regionSelection.x + regionSelection.width / 2,
+              top: regionSelection.y + regionSelection.height + 12 > (regionOverlayRef.current?.clientHeight ?? 0) - 60
+                ? regionSelection.y - 48
+                : regionSelection.y + regionSelection.height + 12,
+            }}
+          >
+            <button
+              className="region-btn-capture"
+              onClick={(e) => { e.stopPropagation(); handleRegionCapture(); }}
+              title="Capture region (Enter)"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            </button>
+            <button
+              className="region-btn-close"
+              onClick={(e) => { e.stopPropagation(); closeRegionCapture(); }}
+              title="Close (Esc)"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+
+          {/* Hint text */}
+          <div className="region-hint">
+            Drag to move · Handles to resize · Enter to capture · Esc to close
           </div>
         </div>
       )}
