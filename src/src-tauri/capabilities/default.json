@@ -1,13 +1,23 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "enables the default permissions",
+  "description": "Permissions for Desktop Chat: screenshots, file dialogs, and filesystem access",
   "windows": [
     "main"
   ],
   "permissions": [
     "core:default",
     "screenshots:default",
-    "dialog:default"
+    "dialog:default",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "dialog:allow-message",
+    "dialog:allow-ask",
+    "fs:default",
+    "fs:allow-read-file",
+    "fs:allow-read-dir",
+    "fs:allow-write-file",
+    "fs:allow-exists",
+    "fs:allow-mkdir"
   ]
 }

@@ -76,23 +76,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5f0e0fee31ef5ed1ba1316088939cea399010ed7731dba877ed44aeb407a75ea"
 
 [[package]]
-name = "app"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "image",
- "log",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-log",
- "tauri-plugin-screenshots",
- "xcap",
-]
-
-[[package]]
 name = "arrayvec"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -642,6 +625,23 @@ dependencies = [
  "quote",
  "rustc_version",
  "syn 2.0.114",
+]
+
+[[package]]
+name = "desktop-chat"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "image",
+ "log",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-log",
+ "tauri-plugin-screenshots",
+ "xcap",
 ]
 
 [[package]]
