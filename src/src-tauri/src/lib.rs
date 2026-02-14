@@ -23,6 +23,17 @@ pub struct Base64Image {
     pub mime_type: String,
 }
 
+/// Metadata about an available window.
+#[derive(Serialize)]
+pub struct WindowInfo {
+    pub id: u32,
+    pub title: String,
+    pub app_name: String,
+    pub width: u32,
+    pub height: u32,
+    pub is_minimized: bool,
+}
+
 /// Lists all available monitors with their metadata.
 #[tauri::command]
 fn list_monitors() -> Result<Vec<MonitorInfo>, String> {
@@ -68,6 +79,57 @@ async fn capture_monitor_screenshot(monitor_index: Option<usize>) -> Result<Base
             .map_err(|e| format!("Failed to capture screenshot: {e}"))?;
 
         // Encode the RGBA image as PNG into a byte buffer
+        let mut png_bytes: Vec<u8> = Vec::new();
+        rgba_image
+            .write_to(&mut Cursor::new(&mut png_bytes), ImageFormat::Png)
+            .map_err(|e| format!("Failed to encode screenshot as PNG: {e}"))?;
+
+        Ok(Base64Image {
+            data: STANDARD.encode(&png_bytes),
+            mime_type: "image/png".to_string(),
+        })
+    })
+    .await
+    .map_err(|e| format!("Screenshot task failed: {e}"))?
+}
+
+/// Lists all available windows with their metadata.
+/// Filters out windows with empty titles and minimized windows.
+#[tauri::command]
+fn list_windows() -> Result<Vec<WindowInfo>, String> {
+    let windows = xcap::Window::all().map_err(|e| format!("Failed to list windows: {e}"))?;
+
+    Ok(windows
+        .into_iter()
+        .filter(|w| !w.title().is_empty() && !w.is_minimized())
+        .map(|w| WindowInfo {
+            id: w.id(),
+            title: w.title().to_string(),
+            app_name: w.app_name().to_string(),
+            width: w.width(),
+            height: w.height(),
+            is_minimized: w.is_minimized(),
+        })
+        .collect())
+}
+
+/// Captures a screenshot of the specified window (by ID) and returns it as
+/// a base64-encoded PNG.
+#[tauri::command]
+async fn capture_window_screenshot(window_id: u32) -> Result<Base64Image, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let windows =
+            xcap::Window::all().map_err(|e| format!("Failed to list windows: {e}"))?;
+
+        let window = windows
+            .into_iter()
+            .find(|w| w.id() == window_id)
+            .ok_or_else(|| format!("Window with id {window_id} not found"))?;
+
+        let rgba_image = window
+            .capture_image()
+            .map_err(|e| format!("Failed to capture window screenshot: {e}"))?;
+
         let mut png_bytes: Vec<u8> = Vec::new();
         rgba_image
             .write_to(&mut Cursor::new(&mut png_bytes), ImageFormat::Png)
@@ -154,6 +216,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_monitors,
             capture_monitor_screenshot,
+            list_windows,
+            capture_window_screenshot,
             pick_image_file,
         ])
         .run(tauri::generate_context!())

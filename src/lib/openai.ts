@@ -1,8 +1,9 @@
-// ── OpenAI API Service ─────────────────────────────────────────────────
-// GPT-4o mini chat completions with text + vision (base64 image) support,
-// streaming responses, and retry logic with exponential backoff.
+// ── OpenAI Responses API Service ──────────────────────────────────────
+// GPT-4o mini via the Responses API with text + vision (base64 image)
+// support, optional web search tool, streaming responses, and retry
+// logic with exponential backoff.
 
-const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
+const OPENAI_API_URL = "https://api.openai.com/v1/responses";
 const DEFAULT_MODEL = "gpt-4o-mini";
 const MAX_RETRIES = 3;
 const INITIAL_DELAY_MS = 1000;
@@ -20,45 +21,57 @@ if (!apiKey) {
 
 // ── Types ──────────────────────────────────────────────────────────────
 
-/** A text content part for the OpenAI messages API. */
+/** A text content part for the Responses API input. */
 type TextContentPart = {
-  type: "text";
+  type: "input_text";
   text: string;
 };
 
-/** An image content part for the OpenAI vision API. */
+/** An image content part for the Responses API vision input. */
 type ImageContentPart = {
-  type: "image_url";
-  image_url: {
-    url: string;
-    detail?: "low" | "high" | "auto";
-  };
+  type: "input_image";
+  image_url: string;
+  detail?: "low" | "high" | "auto";
 };
 
 type ContentPart = TextContentPart | ImageContentPart;
 
-/** A message in the OpenAI chat completions API format. */
-type OpenAIMessage = {
-  role: "system" | "user" | "assistant";
+/** A message in the Responses API input format. */
+type InputMessage = {
+  role: "user" | "assistant";
   content: string | ContentPart[];
 };
 
-/** Options for chat completion requests. */
+/** A URL citation annotation returned by the web search tool. */
+type UrlCitation = {
+  type: "url_citation";
+  url: string;
+  title: string;
+  start_index: number;
+  end_index: number;
+};
+
+/** Options for Responses API requests. */
 type ChatCompletionOptions = {
   model?: string;
   temperature?: number;
   maxTokens?: number;
   systemPrompt?: string;
+  webSearch?: boolean;
 };
 
-/** Callbacks for streaming chat completion. */
+/** Callbacks for streaming responses. */
 type StreamCallbacks = {
   /** Called for each token as it arrives. */
   onToken: (token: string) => void;
   /** Called when the full response is complete. */
-  onComplete: (fullText: string) => void;
+  onComplete: (fullText: string, citations: UrlCitation[]) => void;
   /** Called if an error occurs during streaming. */
   onError: (error: OpenAIError) => void;
+  /** Called when a web search is in progress. */
+  onWebSearchStart?: () => void;
+  /** Called when a web search finishes. */
+  onWebSearchComplete?: () => void;
 };
 
 // ── Error handling ─────────────────────────────────────────────────────
@@ -143,42 +156,36 @@ async function withRetry<T>(
 // ── Message formatting ─────────────────────────────────────────────────
 
 /**
- * Convert application message objects to the OpenAI chat completions API
- * format. Handles both plain-text messages and vision messages with
+ * Convert application message objects to the Responses API input format.
+ * Handles both plain-text messages and vision messages with
  * base64-encoded images or image URLs.
  *
- * @param messages - Array of app-level messages (matching ChatMessage shape)
- * @param systemPrompt - Optional system prompt prepended to the conversation
+ * Note: system prompt is passed via `instructions` parameter in the
+ * Responses API, not as a message in the input array.
  */
-function formatMessages(
+function formatInput(
   messages: ReadonlyArray<{
     role: string;
     content: string;
     image_url?: string | null;
-  }>,
-  systemPrompt?: string
-): OpenAIMessage[] {
-  const formatted: OpenAIMessage[] = [];
-
-  if (systemPrompt) {
-    formatted.push({ role: "system", content: systemPrompt });
-  }
+  }>
+): InputMessage[] {
+  const formatted: InputMessage[] = [];
 
   for (const msg of messages) {
-    const role = msg.role as OpenAIMessage["role"];
+    const role = msg.role as InputMessage["role"];
 
     if (msg.image_url) {
       // Vision message: combine text and image in a multi-part content array
-      const content: ContentPart[] = [
-        { type: "text", text: msg.content },
-        {
-          type: "image_url",
-          image_url: {
-            url: msg.image_url,
-            detail: "auto",
-          },
-        },
-      ];
+      const content: ContentPart[] = [];
+      if (msg.content) {
+        content.push({ type: "input_text", text: msg.content });
+      }
+      content.push({
+        type: "input_image",
+        image_url: msg.image_url,
+        detail: "auto",
+      });
       formatted.push({ role, content });
     } else {
       // Plain text message
@@ -192,9 +199,6 @@ function formatMessages(
 /**
  * Build a base64 data URL from raw image bytes, suitable for passing as
  * the `image_url` field in a message.
- *
- * @param base64Data - Base64-encoded image bytes (no prefix)
- * @param mimeType - Image MIME type (defaults to "image/png")
  */
 function createBase64ImageUrl(
   base64Data: string,
@@ -226,18 +230,14 @@ async function safeParseErrorBody(
   }
 }
 
-// ── Streaming chat completion ──────────────────────────────────────────
+// ── Streaming response ─────────────────────────────────────────────────
 
 /**
- * Send a chat completion request and stream tokens back in real-time.
+ * Send a Responses API request and stream tokens back in real-time.
  *
  * Retry logic applies only to the initial HTTP connection (e.g. rate
  * limits). Once streaming begins, errors are forwarded to `onError`
  * without retry to avoid duplicate partial output.
- *
- * @param messages - Conversation history
- * @param callbacks - Token, completion, and error handlers
- * @param options - Model, temperature, max tokens, system prompt
  */
 async function streamChatCompletion(
   messages: ReadonlyArray<{
@@ -253,15 +253,29 @@ async function streamChatCompletion(
     temperature = 0.7,
     maxTokens = 4096,
     systemPrompt,
+    webSearch = false,
   } = options;
 
-  const body = {
+  const tools: Array<{ type: string }> = [];
+  if (webSearch) {
+    tools.push({ type: "web_search_preview" });
+  }
+
+  const body: Record<string, unknown> = {
     model,
-    messages: formatMessages(messages, systemPrompt),
+    input: formatInput(messages),
     temperature,
-    max_tokens: maxTokens,
+    max_output_tokens: maxTokens,
     stream: true,
   };
+
+  if (systemPrompt) {
+    body.instructions = systemPrompt;
+  }
+
+  if (tools.length > 0) {
+    body.tools = tools;
+  }
 
   // Phase 1: Establish connection (with retry for rate limits / 5xx)
   let response: Response;
@@ -297,6 +311,7 @@ async function streamChatCompletion(
   const decoder = new TextDecoder();
   let fullText = "";
   let buffer = "";
+  const citations: UrlCitation[] = [];
 
   try {
     while (true) {
@@ -308,49 +323,116 @@ async function streamChatCompletion(
       // Keep the last (potentially incomplete) line in the buffer
       buffer = lines.pop() ?? "";
 
+      // Parse SSE events: "event: <type>\ndata: <json>\n\n"
+      let currentEvent = "";
       for (const line of lines) {
         const trimmed = line.trim();
-        if (!trimmed || !trimmed.startsWith("data: ")) continue;
 
-        const data = trimmed.slice(6); // strip "data: "
+        if (trimmed.startsWith("event: ")) {
+          currentEvent = trimmed.slice(7);
+          continue;
+        }
+
+        if (!trimmed.startsWith("data: ")) continue;
+
+        const data = trimmed.slice(6);
         if (data === "[DONE]") continue;
 
         try {
-          const parsed = JSON.parse(data) as {
-            choices?: Array<{ delta?: { content?: string } }>;
-          };
-          const token = parsed.choices?.[0]?.delta?.content;
-          if (token) {
-            fullText += token;
-            callbacks.onToken(token);
+          const parsed = JSON.parse(data);
+
+          if (currentEvent === "response.output_text.delta") {
+            const token = parsed.delta as string | undefined;
+            if (token) {
+              fullText += token;
+              callbacks.onToken(token);
+            }
+          } else if (
+            currentEvent === "response.web_search_call.in_progress" ||
+            currentEvent === "response.web_search_call.searching"
+          ) {
+            callbacks.onWebSearchStart?.();
+          } else if (currentEvent === "response.web_search_call.completed") {
+            callbacks.onWebSearchComplete?.();
+          } else if (currentEvent === "response.output_text.annotation.added") {
+            const annotation = parsed.annotation;
+            if (annotation?.type === "url_citation") {
+              citations.push({
+                type: "url_citation",
+                url: annotation.url,
+                title: annotation.title,
+                start_index: annotation.start_index,
+                end_index: annotation.end_index,
+              });
+            }
+          } else if (currentEvent === "response.completed") {
+            // Extract any citations from the completed response output
+            const output = parsed.response?.output;
+            if (Array.isArray(output)) {
+              for (const item of output) {
+                if (item.type === "message" && Array.isArray(item.content)) {
+                  for (const part of item.content) {
+                    if (
+                      part.type === "output_text" &&
+                      Array.isArray(part.annotations)
+                    ) {
+                      for (const ann of part.annotations) {
+                        if (ann.type === "url_citation") {
+                          // Avoid duplicates from annotation.added events
+                          const exists = citations.some(
+                            (c) =>
+                              c.url === ann.url &&
+                              c.start_index === ann.start_index
+                          );
+                          if (!exists) {
+                            citations.push({
+                              type: "url_citation",
+                              url: ann.url,
+                              title: ann.title,
+                              start_index: ann.start_index,
+                              end_index: ann.end_index,
+                            });
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          } else if (currentEvent === "error") {
+            const msg =
+              (parsed.message as string) ?? "Streaming error from API";
+            throw new OpenAIError(msg);
           }
-        } catch {
+        } catch (e) {
+          if (e instanceof OpenAIError) throw e;
           // Skip malformed SSE chunks
         }
+
+        currentEvent = "";
       }
     }
 
-    callbacks.onComplete(fullText);
+    callbacks.onComplete(fullText, citations);
   } catch (error) {
     callbacks.onError(
-      new OpenAIError(
-        error instanceof Error ? error.message : "Stream read failed"
-      )
+      error instanceof OpenAIError
+        ? error
+        : new OpenAIError(
+            error instanceof Error ? error.message : "Stream read failed"
+          )
     );
   } finally {
     reader.releaseLock();
   }
 }
 
-// ── Non-streaming chat completion ──────────────────────────────────────
+// ── Non-streaming response ─────────────────────────────────────────────
 
 /**
- * Send a chat completion request and return the full response text.
+ * Send a Responses API request and return the full response text.
  * Automatically retries on rate-limit and server errors.
- *
- * @param messages - Conversation history
- * @param options - Model, temperature, max tokens, system prompt
- * @returns The assistant's response text
  */
 async function chatCompletion(
   messages: ReadonlyArray<{
@@ -365,14 +447,28 @@ async function chatCompletion(
     temperature = 0.7,
     maxTokens = 4096,
     systemPrompt,
+    webSearch = false,
   } = options;
 
-  const body = {
+  const tools: Array<{ type: string }> = [];
+  if (webSearch) {
+    tools.push({ type: "web_search_preview" });
+  }
+
+  const body: Record<string, unknown> = {
     model,
-    messages: formatMessages(messages, systemPrompt),
+    input: formatInput(messages),
     temperature,
-    max_tokens: maxTokens,
+    max_output_tokens: maxTokens,
   };
+
+  if (systemPrompt) {
+    body.instructions = systemPrompt;
+  }
+
+  if (tools.length > 0) {
+    body.tools = tools;
+  }
 
   return withRetry(async () => {
     const response = await fetch(OPENAI_API_URL, buildRequestInit(body));
@@ -383,9 +479,21 @@ async function chatCompletion(
     }
 
     const data = (await response.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
+      output?: Array<{
+        type: string;
+        content?: Array<{
+          type: string;
+          text?: string;
+        }>;
+      }>;
     };
-    const content = data.choices?.[0]?.message?.content;
+
+    // Find the message output item and extract text
+    const messageItem = data.output?.find((item) => item.type === "message");
+    const textPart = messageItem?.content?.find(
+      (part) => part.type === "output_text"
+    );
+    const content = textPart?.text;
 
     if (!content) {
       throw new OpenAIError("No content in API response");
@@ -400,15 +508,18 @@ async function chatCompletion(
 export {
   streamChatCompletion,
   chatCompletion,
-  formatMessages,
+  formatInput,
+  formatInput as formatMessages,
   createBase64ImageUrl,
   OpenAIError,
 };
 
 export type {
-  OpenAIMessage,
+  InputMessage,
+  InputMessage as OpenAIMessage,
   ChatCompletionOptions,
   StreamCallbacks,
+  UrlCitation,
   ContentPart,
   TextContentPart,
   ImageContentPart,

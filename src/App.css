@@ -12,6 +12,70 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════
+   ICON FIXES - Remove white borders and backgrounds
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* Reset all SVGs to prevent borders */
+svg {
+  display: block;
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+/* Fix icon buttons - ensure no background or border */
+.btn-input-action,
+.btn-send,
+.btn-sidebar-toggle,
+.btn-session-action {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* Ensure SVGs inside buttons have no borders or backgrounds */
+.btn-input-action svg,
+.btn-send svg,
+.btn-sidebar-toggle svg,
+.btn-session-action svg {
+  border: none !important;
+  outline: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  fill: none;
+}
+
+/* Remove any default button styling that creates borders */
+button:focus svg,
+button:active svg,
+button:hover svg {
+  outline: none !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* Force no background on icon button states */
+.btn-input-action:hover,
+.btn-input-action:focus,
+.btn-input-action:active,
+.btn-send:hover,
+.btn-send:focus,
+.btn-send:active {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* Remove any webkit/moz default borders */
+.btn-input-action::-moz-focus-inner,
+.btn-send::-moz-focus-inner,
+.btn-sidebar-toggle::-moz-focus-inner,
+.btn-session-action::-moz-focus-inner {
+  border: 0;
+  padding: 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
    SIDEBAR
    ═══════════════════════════════════════════════════════════════════ */
 
@@ -501,6 +565,28 @@
   animation-delay: 0.32s;
 }
 
+/* ── Searching indicator ────────────────────────────────────────── */
+
+.searching-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  color: var(--accent-text);
+  padding: 2px 0;
+  animation: searchPulse 1.5s ease-in-out infinite;
+}
+
+.searching-indicator svg {
+  animation: spin 1.2s linear infinite;
+  opacity: 0.7;
+}
+
+@keyframes searchPulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
 @keyframes typingBounce {
   0%,
   60%,
@@ -631,6 +717,16 @@
   cursor: not-allowed;
 }
 
+.btn-input-action.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.btn-input-action.active:hover {
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+}
+
 .chat-textarea {
   flex: 1;
   resize: none;
@@ -688,6 +784,284 @@
   opacity: 0.25;
   cursor: not-allowed;
   box-shadow: none;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   SCREENSHOT MODE BUTTON GROUP
+   ═══════════════════════════════════════════════════════════════════ */
+
+.screenshot-btn-group {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.btn-screenshot-caret {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: transparent;
+  color: var(--text-tertiary);
+  transition: all var(--transition-fast);
+  margin-left: -4px;
+}
+
+.btn-screenshot-caret:hover {
+  background: var(--bg-surface-hover);
+  color: var(--text-primary);
+}
+
+.btn-screenshot-caret:disabled {
+  opacity: 0.25;
+  cursor: not-allowed;
+}
+
+/* ── Screenshot mode dropdown ─────────────────────────────────── */
+
+.screenshot-mode-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  min-width: 200px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  z-index: 50;
+  padding: 4px;
+  animation: menuSlideUp 0.15s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes menuSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.screenshot-mode-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.screenshot-mode-option:hover {
+  background: var(--bg-surface-hover);
+  color: var(--text-primary);
+}
+
+.screenshot-mode-option.active {
+  color: var(--accent-text);
+}
+
+.screenshot-mode-option .check-icon {
+  margin-left: auto;
+  color: var(--accent);
+}
+
+.screenshot-mode-divider {
+  height: 1px;
+  background: var(--border-subtle);
+  margin: 4px 6px;
+}
+
+.screenshot-mode-pinned {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 0.72rem;
+  overflow: hidden;
+}
+
+.pinned-label {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.62rem;
+}
+
+.pinned-title {
+  color: var(--accent-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   WINDOW PICKER MODAL
+   ═══════════════════════════════════════════════════════════════════ */
+
+.window-picker-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.60);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  animation: overlayFadeIn 0.15s ease;
+}
+
+.window-picker {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xl);
+  width: 90%;
+  max-width: 480px;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow-overlay);
+  animation: modalZoomIn 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+  overflow: hidden;
+}
+
+.window-picker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.window-picker-header h3 {
+  margin: 0;
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+
+.window-picker-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.window-picker-close:hover {
+  background: var(--bg-surface-active);
+  color: var(--text-primary);
+}
+
+.window-picker-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.05) transparent;
+}
+
+.window-picker-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.window-picker-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 2px;
+}
+
+.window-picker-empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 0.82rem;
+}
+
+.window-picker-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  text-align: left;
+}
+
+.window-picker-item:hover {
+  background: var(--bg-surface-hover);
+  border-color: var(--border-subtle);
+}
+
+.window-picker-item.active {
+  background: var(--accent-soft);
+  border-color: rgba(212, 135, 77, 0.15);
+}
+
+.window-picker-item-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.window-picker-app {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+}
+
+.window-picker-title {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.window-picker-item.active .window-picker-title {
+  color: var(--accent-text);
+}
+
+.window-picker-size {
+  font-size: 0.65rem;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -1273,6 +1647,61 @@
 
 .region-btn-close:active {
   transform: scale(0.95);
+}
+
+/* Capture flash — brief green glow when a crop is captured */
+.region-capture-flash {
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  pointer-events: none;
+  animation: captureFlash 0.4s ease-out forwards;
+  z-index: 5;
+}
+
+@keyframes captureFlash {
+  0% {
+    box-shadow: inset 0 0 0 3px rgba(80, 200, 120, 0.9);
+    background: rgba(80, 200, 120, 0.15);
+  }
+  100% {
+    box-shadow: inset 0 0 0 0px rgba(80, 200, 120, 0);
+    background: rgba(80, 200, 120, 0);
+  }
+}
+
+/* LIVE badge — shown in window live mode */
+.region-live-badge {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px 5px 10px;
+  background: rgba(0, 0, 0, 0.7);
+  border: 1px solid rgba(232, 84, 84, 0.3);
+  border-radius: var(--radius-full);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: rgba(232, 84, 84, 0.9);
+  pointer-events: none;
+  backdrop-filter: blur(6px);
+  z-index: 4;
+}
+
+.region-live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(232, 84, 84, 0.9);
+  animation: livePulse 1.5s ease-in-out infinite;
+}
+
+@keyframes livePulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.85); }
 }
 
 /* Hint text at bottom center */

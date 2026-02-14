@@ -4,6 +4,7 @@ import type { User } from "@supabase/supabase-js";
 import { supabase } from "./lib/supabase";
 import type { ChatSession, ChatMessage } from "./lib/database.types";
 import { streamChatCompletion } from "./lib/openai";
+import type { UrlCitation } from "./lib/openai";
 import "./App.css";
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -12,6 +13,16 @@ import "./App.css";
 interface Base64Image {
   data: string;
   mime_type: string;
+}
+
+/** Shape returned by the list_windows Tauri command. */
+interface WindowInfo {
+  id: number;
+  title: string;
+  app_name: string;
+  width: number;
+  height: number;
+  is_minimized: boolean;
 }
 
 /** A pending image attachment before the message is sent. */
@@ -107,6 +118,8 @@ function App() {
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   const [sending, setSending] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
+  const [webSearchEnabled, setWebSearchEnabled] = useState(false);
+  const [isSearching, setIsSearching] = useState(false);
 
   // UI state
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
@@ -119,6 +132,14 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  // Screenshot mode state
+  const [screenshotMode, setScreenshotMode] = useState<"screen" | "window">("screen");
+  const [pinnedWindowId, setPinnedWindowId] = useState<number | null>(null);
+  const [pinnedWindowTitle, setPinnedWindowTitle] = useState<string | null>(null);
+  const [showWindowPicker, setShowWindowPicker] = useState(false);
+  const [windowList, setWindowList] = useState<WindowInfo[]>([]);
+  const [screenshotModeMenuOpen, setScreenshotModeMenuOpen] = useState(false);
+
   // Region capture state
   const [regionCaptureScreenshot, setRegionCaptureScreenshot] = useState<string | null>(null);
   const [regionSelection, setRegionSelection] = useState({ x: 0, y: 0, width: 400, height: 300 });
@@ -129,6 +150,7 @@ function App() {
     startMouseY: number;
     startSelection: { x: number; y: number; width: number; height: number };
   } | null>(null);
+  const [captureFlashKey, setCaptureFlashKey] = useState(0);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -136,6 +158,8 @@ function App() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const regionOverlayRef = useRef<HTMLDivElement>(null);
   const regionImageRef = useRef<HTMLImageElement>(null);
+  const regionInitializedRef = useRef(false);
+  const regionDragStateRef = useRef(regionDragState);
 
   // Ref mirrors activeSessionId so async closures always see the latest value
   const activeSessionIdRef = useRef<string | null>(null);
@@ -204,10 +228,14 @@ function App() {
     }
   }, [user, loadSessions]);
 
-  // ── Keep activeSessionIdRef in sync with state ─────────────────────
+  // ── Keep refs in sync with state ────────────────────────────────────
   useEffect(() => {
     activeSessionIdRef.current = activeSessionId;
   }, [activeSessionId]);
+
+  useEffect(() => {
+    regionDragStateRef.current = regionDragState;
+  }, [regionDragState]);
 
   // ── Load messages when active session changes ───────────────────────
   useEffect(() => {
@@ -388,19 +416,68 @@ function App() {
 
   const handleScreenshot = async () => {
     try {
-      const result = await invoke<Base64Image>("capture_monitor_screenshot", {
-        monitor_index: null,
-      });
-      // Open region capture overlay instead of adding directly
+      let result: Base64Image;
+
+      if (screenshotMode === "window") {
+        if (!pinnedWindowId) {
+          // No window pinned yet — open the picker
+          openWindowPicker();
+          return;
+        }
+        try {
+          result = await invoke<Base64Image>("capture_window_screenshot", {
+            windowId: pinnedWindowId,
+          });
+        } catch (err) {
+          // Window likely closed — clear pin and show error
+          console.error("Window capture failed:", err);
+          setPinnedWindowId(null);
+          setPinnedWindowTitle(null);
+          setErrorMessage("Pinned window is no longer available. Please select a new window.");
+          openWindowPicker();
+          return;
+        }
+      } else {
+        result = await invoke<Base64Image>("capture_monitor_screenshot", {
+          monitorIndex: null,
+        });
+      }
+
+      // Open region capture overlay
       setRegionCaptureScreenshot(toDataUrl(result.data, result.mime_type));
     } catch (err) {
       console.error("Screenshot failed:", err);
     }
   };
 
+  const openWindowPicker = async () => {
+    try {
+      const windows = await invoke<WindowInfo[]>("list_windows");
+      // Filter out our own app window and any with empty titles
+      const filtered = windows.filter(
+        (w) => w.app_name !== "desktop-chat" && w.title.trim() !== ""
+      );
+      setWindowList(filtered);
+      setShowWindowPicker(true);
+    } catch (err) {
+      console.error("Failed to list windows:", err);
+      setErrorMessage("Failed to list windows. Please try again.");
+    }
+  };
+
+  const selectWindow = (w: WindowInfo) => {
+    setPinnedWindowId(w.id);
+    setPinnedWindowTitle(w.title);
+    setShowWindowPicker(false);
+  };
+
   // ── Region capture handlers ──────────────────────────────────────
 
   const handleRegionImageLoad = useCallback(() => {
+    // Skip re-centering on live refreshes — only init on first load
+    if (regionInitializedRef.current) return;
+    regionInitializedRef.current = true;
+
     const overlay = regionOverlayRef.current;
     if (!overlay) return;
     const ow = overlay.clientWidth;
@@ -546,12 +623,15 @@ function App() {
     const cropped = cropRegionFromScreenshot();
     if (cropped) {
       setPendingImages((prev) => [...prev, cropped]);
+      setCaptureFlashKey((k) => k + 1);
     }
   }, [cropRegionFromScreenshot]);
 
   const closeRegionCapture = useCallback(() => {
     setRegionCaptureScreenshot(null);
     setRegionDragState(null);
+    regionInitializedRef.current = false;
+    setCaptureFlashKey(0);
   }, []);
 
   // ── Region capture keyboard shortcuts ──────────────────────────────
@@ -569,6 +649,37 @@ function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [regionCaptureScreenshot, closeRegionCapture, handleRegionCapture]);
+
+  // ── Live window refresh ───────────────────────────────────────────
+  // Auto-refresh the background screenshot every ~1.5s in window mode
+  const isWindowLiveMode = regionCaptureScreenshot !== null && screenshotMode === "window" && pinnedWindowId !== null;
+
+  useEffect(() => {
+    if (!isWindowLiveMode || !pinnedWindowId) return;
+
+    const interval = setInterval(async () => {
+      // Don't refresh while user is dragging the selection
+      if (regionDragStateRef.current) return;
+      try {
+        const result = await invoke<Base64Image>("capture_window_screenshot", {
+          windowId: pinnedWindowId,
+        });
+        setRegionCaptureScreenshot(toDataUrl(result.data, result.mime_type));
+      } catch {
+        // Window may be briefly unavailable — skip this tick
+      }
+    }, 1500);
+
+    return () => clearInterval(interval);
+  }, [isWindowLiveMode, pinnedWindowId]);
+
+  // Close screenshot mode menu on click outside
+  useEffect(() => {
+    if (!screenshotModeMenuOpen) return;
+    const onClick = () => setScreenshotModeMenuOpen(false);
+    window.addEventListener("click", onClick);
+    return () => window.removeEventListener("click", onClick);
+  }, [screenshotModeMenuOpen]);
 
   const handleImageUpload = async () => {
     try {
@@ -721,6 +832,8 @@ function App() {
 
       // Stream AI response from OpenAI
       let aiResponseText = "";
+      let responseCitations: UrlCitation[] = [];
+      setIsSearching(false);
 
       await streamChatCompletion(
         contextMessages,
@@ -732,20 +845,40 @@ function App() {
               setStreamingContent((prev) => prev + token);
             }
           },
-          onComplete: (fullText) => {
+          onComplete: (fullText, citations) => {
             aiResponseText = fullText;
+            responseCitations = citations;
+            setIsSearching(false);
           },
           onError: (error) => {
             console.error("OpenAI streaming error:", error.message);
             aiResponseText = `Sorry, I wasn't able to respond — ${error.message}`;
+            setIsSearching(false);
+          },
+          onWebSearchStart: () => {
+            if (activeSessionIdRef.current === sendingSessionIdRef.current) {
+              setIsSearching(true);
+            }
+          },
+          onWebSearchComplete: () => {
+            setIsSearching(false);
           },
         },
-        { systemPrompt: SYSTEM_PROMPT }
+        { systemPrompt: SYSTEM_PROMPT, webSearch: webSearchEnabled }
       );
 
       // Save the AI response to Supabase (updates session timestamp too)
-      if (aiResponseText) {
-        await addMessage(sessionId, "assistant", aiResponseText);
+      // Append citation links to the stored message so they persist
+      let storedResponse = aiResponseText;
+      if (responseCitations.length > 0 && aiResponseText) {
+        const citationLinks = responseCitations
+          .map((c) => `[${c.title}](${c.url})`)
+          .filter((v, i, a) => a.indexOf(v) === i) // dedupe
+          .join("\n");
+        storedResponse = `${aiResponseText}\n\nSources:\n${citationLinks}`;
+      }
+      if (storedResponse) {
+        await addMessage(sessionId, "assistant", storedResponse);
       }
 
       // Refresh session list to update timestamps
@@ -1028,15 +1161,24 @@ function App() {
                   {sending && activeSessionId === sendingSessionIdRef.current && (
                     <div className="message-bubble assistant">
                       <div className="message-role">AI</div>
+                      {isSearching && !streamingContent && (
+                        <div className="searching-indicator">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <circle cx="11" cy="11" r="8" />
+                            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                          </svg>
+                          Searching the web...
+                        </div>
+                      )}
                       {streamingContent ? (
                         <div className="message-text">{streamingContent}</div>
-                      ) : (
+                      ) : !isSearching ? (
                         <div className="typing-indicator">
                           <span />
                           <span />
                           <span />
                         </div>
-                      )}
+                      ) : null}
                     </div>
                   )}
                 </>
@@ -1067,18 +1209,113 @@ function App() {
               <div className="chat-input-row">
                 {/* Attachment buttons */}
                 <div className="chat-input-actions">
-                  <button
-                    className="btn-input-action"
-                    title="Take screenshot"
-                    onClick={handleScreenshot}
-                    disabled={sending}
-                  >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
-                      <line x1="8" y1="21" x2="16" y2="21" />
-                      <line x1="12" y1="17" x2="12" y2="21" />
-                    </svg>
-                  </button>
+                  <div className="screenshot-btn-group">
+                    <button
+                      className="btn-input-action"
+                      title={screenshotMode === "window" && pinnedWindowTitle
+                        ? `Screenshot: ${pinnedWindowTitle}`
+                        : "Take screenshot"}
+                      onClick={handleScreenshot}
+                      disabled={sending}
+                    >
+                      {screenshotMode === "window" ? (
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <rect x="2" y="4" width="20" height="16" rx="2" />
+                          <line x1="2" y1="8" x2="22" y2="8" />
+                          <circle cx="5" cy="6" r="0.5" fill="currentColor" />
+                          <circle cx="7.5" cy="6" r="0.5" fill="currentColor" />
+                          <circle cx="10" cy="6" r="0.5" fill="currentColor" />
+                        </svg>
+                      ) : (
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
+                          <line x1="8" y1="21" x2="16" y2="21" />
+                          <line x1="12" y1="17" x2="12" y2="21" />
+                        </svg>
+                      )}
+                    </button>
+                    <button
+                      className="btn-screenshot-caret"
+                      title="Screenshot mode"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setScreenshotModeMenuOpen((prev) => !prev);
+                      }}
+                      disabled={sending}
+                    >
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="6 9 12 15 18 9" />
+                      </svg>
+                    </button>
+
+                    {/* Screenshot mode dropdown */}
+                    {screenshotModeMenuOpen && (
+                      <div className="screenshot-mode-menu" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          className={`screenshot-mode-option ${screenshotMode === "screen" ? "active" : ""}`}
+                          onClick={() => {
+                            setScreenshotMode("screen");
+                            setScreenshotModeMenuOpen(false);
+                          }}
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
+                            <line x1="8" y1="21" x2="16" y2="21" />
+                            <line x1="12" y1="17" x2="12" y2="21" />
+                          </svg>
+                          <span>Full Screen</span>
+                          {screenshotMode === "screen" && (
+                            <svg className="check-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                              <polyline points="20 6 9 17 4 12" />
+                            </svg>
+                          )}
+                        </button>
+                        <button
+                          className={`screenshot-mode-option ${screenshotMode === "window" ? "active" : ""}`}
+                          onClick={() => {
+                            setScreenshotMode("window");
+                            setScreenshotModeMenuOpen(false);
+                            if (!pinnedWindowId) {
+                              openWindowPicker();
+                            }
+                          }}
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <rect x="2" y="4" width="20" height="16" rx="2" />
+                            <line x1="2" y1="8" x2="22" y2="8" />
+                          </svg>
+                          <span>Window</span>
+                          {screenshotMode === "window" && (
+                            <svg className="check-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                              <polyline points="20 6 9 17 4 12" />
+                            </svg>
+                          )}
+                        </button>
+                        {screenshotMode === "window" && pinnedWindowTitle && (
+                          <>
+                            <div className="screenshot-mode-divider" />
+                            <div className="screenshot-mode-pinned">
+                              <span className="pinned-label">Pinned:</span>
+                              <span className="pinned-title">{pinnedWindowTitle}</span>
+                            </div>
+                            <button
+                              className="screenshot-mode-option"
+                              onClick={() => {
+                                setScreenshotModeMenuOpen(false);
+                                openWindowPicker();
+                              }}
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                              </svg>
+                              <span>Change window...</span>
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
                   <button
                     className="btn-input-action"
                     title="Upload image"
@@ -1089,6 +1326,18 @@ function App() {
                       <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
                       <circle cx="8.5" cy="8.5" r="1.5" />
                       <polyline points="21 15 16 10 5 21" />
+                    </svg>
+                  </button>
+                  <button
+                    className={`btn-input-action ${webSearchEnabled ? "active" : ""}`}
+                    title={webSearchEnabled ? "Web search enabled" : "Enable web search"}
+                    onClick={() => setWebSearchEnabled((prev) => !prev)}
+                    disabled={sending}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="12" cy="12" r="10" />
+                      <line x1="2" y1="12" x2="22" y2="12" />
+                      <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
                     </svg>
                   </button>
                 </div>
@@ -1233,7 +1482,20 @@ function App() {
             <div className="region-dimensions">
               {Math.round(regionSelection.width)} x {Math.round(regionSelection.height)}
             </div>
+
+            {/* Capture flash overlay */}
+            {captureFlashKey > 0 && (
+              <div key={captureFlashKey} className="region-capture-flash" />
+            )}
           </div>
+
+          {/* LIVE badge (window mode only) */}
+          {isWindowLiveMode && (
+            <div className="region-live-badge">
+              <span className="region-live-dot" />
+              LIVE
+            </div>
+          )}
 
           {/* Toolbar */}
           <div
@@ -1257,7 +1519,7 @@ function App() {
             <button
               className="region-btn-close"
               onClick={(e) => { e.stopPropagation(); closeRegionCapture(); }}
-              title="Close (Esc)"
+              title={isWindowLiveMode ? "Done (Esc)" : "Close (Esc)"}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <line x1="18" y1="6" x2="6" y2="18" />
@@ -1268,7 +1530,56 @@ function App() {
 
           {/* Hint text */}
           <div className="region-hint">
-            Drag to move · Handles to resize · Enter to capture · Esc to close
+            {isWindowLiveMode
+              ? "Cmd+Tab to scroll target · Enter to capture · Esc when done"
+              : "Drag to move · Handles to resize · Enter to capture · Esc to close"}
+          </div>
+        </div>
+      )}
+
+      {/* ── Window picker modal ─────────────────────────────────────── */}
+      {showWindowPicker && (
+        <div
+          className="window-picker-overlay"
+          onClick={() => setShowWindowPicker(false)}
+        >
+          <div
+            className="window-picker"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="window-picker-header">
+              <h3>Select a Window</h3>
+              <button
+                className="window-picker-close"
+                onClick={() => setShowWindowPicker(false)}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+            <div className="window-picker-list">
+              {windowList.length === 0 ? (
+                <div className="window-picker-empty">
+                  No windows found
+                </div>
+              ) : (
+                windowList.map((w) => (
+                  <button
+                    key={w.id}
+                    className={`window-picker-item ${pinnedWindowId === w.id ? "active" : ""}`}
+                    onClick={() => selectWindow(w)}
+                  >
+                    <div className="window-picker-item-info">
+                      <span className="window-picker-app">{w.app_name}</span>
+                      <span className="window-picker-title">{w.title}</span>
+                    </div>
+                    <span className="window-picker-size">{w.width}x{w.height}</span>
+                  </button>
+                ))
+              )}
+            </div>
           </div>
         </div>
       )}
