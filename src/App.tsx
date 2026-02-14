@@ -33,6 +33,134 @@ interface PendingImage {
   preview: string; // data-URL for display
 }
 
+// ── Theme / accent types ────────────────────────────────────────────
+
+type ThemeMode = "dark" | "light" | "system";
+
+interface AccentPreset {
+  name: string;
+  color: string;
+}
+
+const ACCENT_PRESETS: AccentPreset[] = [
+  { name: "Copper", color: "#d4874d" },
+  { name: "Rose", color: "#c97b7b" },
+  { name: "Crimson", color: "#c94d4d" },
+  { name: "Gold", color: "#c9a84d" },
+  { name: "Sage", color: "#6b9e6b" },
+  { name: "Ocean", color: "#5b8a9e" },
+  { name: "Violet", color: "#8b7bc9" },
+  { name: "Slate", color: "#7b8a9e" },
+];
+
+/** Derive accent-related CSS custom properties from a single hex color. */
+function buildAccentVars(hex: string) {
+  // Parse hex to RGB
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+
+  // Darken for hover (dark theme)
+  const darken = (v: number, amt: number) => Math.max(0, Math.round(v * (1 - amt)));
+  // Lighten for text (dark theme)
+  const lighten = (v: number, amt: number) => Math.min(255, Math.round(v + (255 - v) * amt));
+
+  return {
+    "--accent-base": hex,
+    "--accent-rgb": `${r}, ${g}, ${b}`,
+    "--accent-hover-dark": `rgb(${darken(r, 0.08)}, ${darken(g, 0.08)}, ${darken(b, 0.08)})`,
+    "--accent-text-dark": `rgb(${lighten(r, 0.15)}, ${lighten(g, 0.15)}, ${lighten(b, 0.15)})`,
+    "--accent-base-light": `rgb(${darken(r, 0.15)}, ${darken(g, 0.15)}, ${darken(b, 0.15)})`,
+    "--accent-hover-light": `rgb(${darken(r, 0.22)}, ${darken(g, 0.22)}, ${darken(b, 0.22)})`,
+    "--accent-text-light": `rgb(${darken(r, 0.28)}, ${darken(g, 0.28)}, ${darken(b, 0.28)})`,
+    "--accent-soft-val": `rgba(${r}, ${g}, ${b}, 0.12)`,
+    "--accent-softer-val": `rgba(${r}, ${g}, ${b}, 0.06)`,
+    "--accent-glow-val": `0 0 24px rgba(${r}, ${g}, ${b}, 0.12)`,
+  };
+}
+
+// ── Analysis mode types ─────────────────────────────────────────────
+
+type AnalysisMode = "general" | "sports" | "code" | "quiz";
+
+interface AnalysisModeConfig {
+  label: string;
+  userMessage: string;
+  systemPrompt: string;
+  webSearch: boolean;
+  maxTokens: number;
+}
+
+const ANALYSIS_MODES: Record<AnalysisMode, AnalysisModeConfig> = {
+  general: {
+    label: "General",
+    userMessage: "Look at this screenshot. If there is a question or problem, answer it. If there are answer choices listed, you MUST pick from those choices only.",
+    systemPrompt:
+      "You are a helpful assistant. ANSWER any question, problem, or assignment shown in the screenshot directly — do not just describe or restate it. If answer choices are provided (A, B, C, D, etc.), you MUST select from those options only — never invent your own answer. If you need current information, use web search. Only describe the image if there is truly nothing to answer.",
+    webSearch: true,
+    maxTokens: 1024,
+  },
+  sports: {
+    label: "Sports",
+    userMessage: "Answer this sports question. If answer choices are listed, pick from those choices only.",
+    systemPrompt:
+      "You are a sports expert. Answer the sports question in this screenshot. If multiple choice options are provided, you MUST choose from the listed options only. ALWAYS use web search — prefer searching ESPN (espn.com), StatMuse (statmuse.com), Basketball Reference (basketball-reference.com), and other sports-reference.com sites for accurate stats, scores, records, and standings. Give the answer first, then a brief explanation with the source.",
+    webSearch: true,
+    maxTokens: 1024,
+  },
+  code: {
+    label: "Code",
+    userMessage: "Analyze this code or answer this programming question.",
+    systemPrompt:
+      "You are a programming expert. Analyze the code shown, identify bugs, explain logic, or answer the programming question. If answer choices are provided, select from those only. Be concise and technical.",
+    webSearch: false,
+    maxTokens: 1024,
+  },
+  quiz: {
+    label: "Quiz",
+    userMessage: "Answer this question. If answer choices are listed (A, B, C, D, etc.), you MUST pick from those choices only.",
+    systemPrompt:
+      "You are answering a quiz or test question. Read the question and ALL answer choices carefully. You MUST select from the provided options — NEVER make up an answer that is not listed. State the correct letter/option first, then give a short explanation. Use web search if you need current information.",
+    webSearch: true,
+    maxTokens: 1024,
+  },
+};
+
+/**
+ * Downsize a base64 image to a max dimension for faster API processing.
+ * Returns the original if already small enough.
+ */
+function downsizeImageBase64(
+  base64: string,
+  mimeType: string,
+  maxDim = 1024
+): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const { width, height } = img;
+      if (width <= maxDim && height <= maxDim) {
+        resolve(base64);
+        return;
+      }
+      const scale = maxDim / Math.max(width, height);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(width * scale);
+      canvas.height = Math.round(height * scale);
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        resolve(base64);
+        return;
+      }
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL(mimeType, 0.85);
+      resolve(dataUrl.split(",")[1]);
+    };
+    img.onerror = () => resolve(base64);
+    img.src = `data:${mimeType};base64,${base64}`;
+  });
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────
 
 /** Format a timestamp into a human-readable relative/absolute string. */
@@ -131,6 +259,15 @@ function App() {
   const [imageZoomed, setImageZoomed] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Theme & accent preferences (persisted to localStorage)
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
+    return (localStorage.getItem("theme-mode") as ThemeMode) || "dark";
+  });
+  const [accentColor, setAccentColor] = useState(() => {
+    return localStorage.getItem("accent-color") || "#d4874d";
+  });
 
   // Screenshot mode state
   const [screenshotMode, setScreenshotMode] = useState<"screen" | "window">("screen");
@@ -152,6 +289,19 @@ function App() {
   } | null>(null);
   const [captureFlashKey, setCaptureFlashKey] = useState(0);
 
+  // Instant analysis state
+  const [instantAnalysisEnabled, setInstantAnalysisEnabled] = useState(() => {
+    return localStorage.getItem("instant-analysis") === "true";
+  });
+  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>(() => {
+    return (localStorage.getItem("analysis-mode") as AnalysisMode) || "general";
+  });
+  const [analysisStreamingContent, setAnalysisStreamingContent] = useState("");
+  const [analysisComplete, setAnalysisComplete] = useState<string | null>(null);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isAnalysisSearching, setIsAnalysisSearching] = useState(false);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
@@ -160,6 +310,16 @@ function App() {
   const regionImageRef = useRef<HTMLImageElement>(null);
   const regionInitializedRef = useRef(false);
   const regionDragStateRef = useRef(regionDragState);
+
+  // Signals the live-refresh loop to stop immediately (avoids race with React render cycle)
+  const liveRefreshStoppedRef = useRef(false);
+
+  // Instant analysis refs
+  const instantAnalysisEnabledRef = useRef(false);
+  const analysisCompleteRef = useRef<string | null>(null);
+  const analysisImageRef = useRef<PendingImage | null>(null);
+  const performInstantAnalysisRef = useRef<((image: PendingImage) => Promise<void>) | null>(null);
+  const analysisGenRef = useRef(0);
 
   // Ref mirrors activeSessionId so async closures always see the latest value
   const activeSessionIdRef = useRef<string | null>(null);
@@ -297,6 +457,32 @@ function App() {
       setTimeout(() => inputRef.current?.focus(), 50);
     }
   }, [activeSessionId]);
+
+  // ── Apply theme mode to <html> ──────────────────────────────────
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", themeMode);
+    localStorage.setItem("theme-mode", themeMode);
+  }, [themeMode]);
+
+  // ── Apply accent color as CSS custom properties ────────────────
+  useEffect(() => {
+    const vars = buildAccentVars(accentColor);
+    const root = document.documentElement;
+    for (const [prop, val] of Object.entries(vars)) {
+      root.style.setProperty(prop, val);
+    }
+    localStorage.setItem("accent-color", accentColor);
+  }, [accentColor]);
+
+  // ── Persist instant analysis settings & sync ref ────────────────
+  useEffect(() => {
+    instantAnalysisEnabledRef.current = instantAnalysisEnabled;
+    localStorage.setItem("instant-analysis", String(instantAnalysisEnabled));
+  }, [instantAnalysisEnabled]);
+
+  useEffect(() => {
+    localStorage.setItem("analysis-mode", analysisMode);
+  }, [analysisMode]);
 
   const createSession = async (title = "New Chat") => {
     if (!user) return null;
@@ -619,19 +805,123 @@ function App() {
     };
   }, [regionSelection]);
 
+  // ── Instant analysis ────────────────────────────────────────────────
+
+  const saveAnalysisToChat = async (image: PendingImage, analysis: string) => {
+    try {
+      let sessionId = activeSessionIdRef.current;
+      if (!sessionId) {
+        const title = analysis.slice(0, 50) || "Screenshot Analysis";
+        const newSession = await createSession(title);
+        if (!newSession) return;
+        sessionId = newSession.id;
+      }
+
+      let imageUrl: string | undefined;
+      if (user) {
+        try {
+          imageUrl = await uploadImageToStorage(image.base64, image.mimeType, user.id);
+        } catch {
+          imageUrl = toDataUrl(image.base64, image.mimeType);
+        }
+      } else {
+        imageUrl = toDataUrl(image.base64, image.mimeType);
+      }
+
+      await addMessage(sessionId, "user", "", imageUrl);
+      await addMessage(sessionId, "assistant", analysis);
+      loadSessions();
+    } catch (err) {
+      console.error("Failed to save analysis to chat:", err);
+    }
+  };
+
+  const performInstantAnalysis = async (image: PendingImage) => {
+    const gen = ++analysisGenRef.current;
+    const modeConfig = ANALYSIS_MODES[analysisMode];
+
+    setAnalysisStreamingContent("");
+    setAnalysisComplete(null);
+    setAnalysisError(null);
+    setIsAnalyzing(true);
+    setIsAnalysisSearching(false);
+    analysisCompleteRef.current = null;
+    analysisImageRef.current = image;
+
+    // Downsize image for faster API processing
+    const smallBase64 = await downsizeImageBase64(image.base64, image.mimeType, 1024);
+    if (gen !== analysisGenRef.current) return; // cancelled during resize
+    const imageDataUrl = toDataUrl(smallBase64, image.mimeType);
+
+    await streamChatCompletion(
+      [{ role: "user", content: modeConfig.userMessage, image_url: imageDataUrl }],
+      {
+        onToken: (token) => {
+          if (gen !== analysisGenRef.current) return;
+          setAnalysisStreamingContent((prev) => prev + token);
+        },
+        onComplete: (fullText) => {
+          if (gen !== analysisGenRef.current) return;
+          setAnalysisComplete(fullText);
+          setIsAnalyzing(false);
+          analysisCompleteRef.current = fullText;
+          saveAnalysisToChat(image, fullText);
+        },
+        onError: (error) => {
+          if (gen !== analysisGenRef.current) return;
+          setAnalysisError(error.message);
+          setIsAnalyzing(false);
+          setIsAnalysisSearching(false);
+        },
+        onWebSearchStart: () => {
+          if (gen !== analysisGenRef.current) return;
+          setIsAnalysisSearching(true);
+        },
+        onWebSearchComplete: () => {
+          if (gen !== analysisGenRef.current) return;
+          setIsAnalysisSearching(false);
+        },
+      },
+      {
+        model: "gpt-4o",
+        maxTokens: modeConfig.maxTokens,
+        systemPrompt: modeConfig.systemPrompt,
+        webSearch: modeConfig.webSearch,
+      }
+    );
+  };
+
+  // Keep ref in sync for use inside useCallback
+  performInstantAnalysisRef.current = performInstantAnalysis;
+
   const handleRegionCapture = useCallback(() => {
     const cropped = cropRegionFromScreenshot();
     if (cropped) {
       setPendingImages((prev) => [...prev, cropped]);
       setCaptureFlashKey((k) => k + 1);
+      if (instantAnalysisEnabledRef.current) {
+        performInstantAnalysisRef.current?.(cropped);
+      }
     }
   }, [cropRegionFromScreenshot]);
 
   const closeRegionCapture = useCallback(() => {
+    // Signal the live-refresh loop to stop *immediately*, before React
+    // re-renders and runs effect cleanup. This prevents in-flight or
+    // queued refreshes from re-opening the overlay.
+    liveRefreshStoppedRef.current = true;
     setRegionCaptureScreenshot(null);
     setRegionDragState(null);
     regionInitializedRef.current = false;
     setCaptureFlashKey(0);
+    // Reset instant analysis state
+    setAnalysisStreamingContent("");
+    setAnalysisComplete(null);
+    setAnalysisError(null);
+    setIsAnalyzing(false);
+    setIsAnalysisSearching(false);
+    analysisCompleteRef.current = null;
+    analysisImageRef.current = null;
   }, []);
 
   // ── Region capture keyboard shortcuts ──────────────────────────────
@@ -651,26 +941,51 @@ function App() {
   }, [regionCaptureScreenshot, closeRegionCapture, handleRegionCapture]);
 
   // ── Live window refresh ───────────────────────────────────────────
-  // Auto-refresh the background screenshot every ~1.5s in window mode
+  // Chain captures back-to-back with a short gap so the preview stays
+  // responsive. Using recursive setTimeout instead of setInterval avoids
+  // overlapping captures and keeps perceived latency low (~300ms gap
+  // between the end of one capture and the start of the next).
   const isWindowLiveMode = regionCaptureScreenshot !== null && screenshotMode === "window" && pinnedWindowId !== null;
 
   useEffect(() => {
     if (!isWindowLiveMode || !pinnedWindowId) return;
 
-    const interval = setInterval(async () => {
-      // Don't refresh while user is dragging the selection
-      if (regionDragStateRef.current) return;
+    // Reset the stop signal when starting a new live session
+    liveRefreshStoppedRef.current = false;
+    let cancelled = false;
+
+    const isStopped = () => cancelled || liveRefreshStoppedRef.current;
+
+    const refresh = async () => {
+      if (isStopped()) return;
+
+      // Pause captures while user is dragging the selection
+      if (regionDragStateRef.current) {
+        if (!isStopped()) setTimeout(refresh, 150);
+        return;
+      }
+
       try {
         const result = await invoke<Base64Image>("capture_window_screenshot", {
           windowId: pinnedWindowId,
         });
-        setRegionCaptureScreenshot(toDataUrl(result.data, result.mime_type));
+        if (!isStopped()) {
+          setRegionCaptureScreenshot(toDataUrl(result.data, result.mime_type));
+        }
       } catch {
         // Window may be briefly unavailable — skip this tick
       }
-    }, 1500);
 
-    return () => clearInterval(interval);
+      if (!isStopped()) setTimeout(refresh, 300);
+    };
+
+    // Kick off the first capture after a short delay
+    const timerId = setTimeout(refresh, 300);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timerId);
+    };
   }, [isWindowLiveMode, pinnedWindowId]);
 
   // Close screenshot mode menu on click outside
@@ -1069,12 +1384,24 @@ function App() {
           <span className="user-info" title={user.email}>
             {user.email}
           </span>
-          <button
-            className="btn-sign-out"
-            onClick={() => supabase.auth.signOut()}
-          >
-            Sign Out
-          </button>
+          <div className="sidebar-footer-actions">
+            <button
+              className="btn-settings"
+              onClick={() => setSettingsOpen(true)}
+              title="Settings"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+              </svg>
+            </button>
+            <button
+              className="btn-sign-out"
+              onClick={() => supabase.auth.signOut()}
+            >
+              Sign Out
+            </button>
+          </div>
         </div>
       </aside>
 
@@ -1534,6 +1861,50 @@ function App() {
               ? "Cmd+Tab to scroll target · Enter to capture · Esc when done"
               : "Drag to move · Handles to resize · Enter to capture · Esc to close"}
           </div>
+
+          {/* Instant analysis panel */}
+          {(isAnalyzing || analysisStreamingContent || analysisError) && (
+            <div className="analysis-panel">
+              <div className="analysis-header">
+                <div className="analysis-header-left">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10" />
+                    <path d="M12 16v-4" />
+                    <path d="M12 8h.01" />
+                  </svg>
+                  <span className="analysis-title">AI · {ANALYSIS_MODES[analysisMode].label}</span>
+                </div>
+                {isAnalyzing && !analysisComplete && (
+                  <div className="loading-spinner small analysis-spinner" />
+                )}
+                {analysisComplete && (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#50c878" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                )}
+              </div>
+              <div className="analysis-body">
+                {analysisError ? (
+                  <div className="analysis-error">{analysisError}</div>
+                ) : (
+                  <>
+                    {isAnalysisSearching && !analysisStreamingContent && (
+                      <div className="analysis-searching">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <circle cx="11" cy="11" r="8" />
+                          <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                        </svg>
+                        Searching the web...
+                      </div>
+                    )}
+                    <div className="analysis-text">
+                      {analysisComplete || analysisStreamingContent || (isAnalysisSearching ? "" : "Analyzing...")}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1578,6 +1949,172 @@ function App() {
                     <span className="window-picker-size">{w.width}x{w.height}</span>
                   </button>
                 ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Settings panel ────────────────────────────────────────────── */}
+      {settingsOpen && (
+        <div
+          className="settings-overlay"
+          onClick={() => setSettingsOpen(false)}
+        >
+          <div
+            className="settings-panel"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="settings-header">
+              <h3>Settings</h3>
+              <button
+                className="settings-close"
+                onClick={() => setSettingsOpen(false)}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Theme mode */}
+            <div className="settings-section">
+              <label className="settings-label">Appearance</label>
+              <div className="theme-switcher">
+                {(["dark", "light", "system"] as ThemeMode[]).map((mode) => (
+                  <button
+                    key={mode}
+                    className={`theme-option ${themeMode === mode ? "active" : ""}`}
+                    onClick={() => setThemeMode(mode)}
+                  >
+                    {mode === "dark" && (
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+                      </svg>
+                    )}
+                    {mode === "light" && (
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="12" cy="12" r="5" />
+                        <line x1="12" y1="1" x2="12" y2="3" />
+                        <line x1="12" y1="21" x2="12" y2="23" />
+                        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+                        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+                        <line x1="1" y1="12" x2="3" y2="12" />
+                        <line x1="21" y1="12" x2="23" y2="12" />
+                        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+                        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+                      </svg>
+                    )}
+                    {mode === "system" && (
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
+                        <line x1="8" y1="21" x2="16" y2="21" />
+                        <line x1="12" y1="17" x2="12" y2="21" />
+                      </svg>
+                    )}
+                    <span>{mode.charAt(0).toUpperCase() + mode.slice(1)}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Accent color */}
+            <div className="settings-section">
+              <label className="settings-label">Accent Color</label>
+              <div className="accent-grid">
+                {ACCENT_PRESETS.map((preset) => (
+                  <button
+                    key={preset.color}
+                    className={`accent-swatch ${accentColor === preset.color ? "active" : ""}`}
+                    style={{ "--swatch-color": preset.color } as React.CSSProperties}
+                    onClick={() => setAccentColor(preset.color)}
+                    title={preset.name}
+                  >
+                    {accentColor === preset.color && (
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                    )}
+                  </button>
+                ))}
+                {/* Custom color picker */}
+                <div className={`accent-swatch custom ${!ACCENT_PRESETS.some((p) => p.color === accentColor) ? "active" : ""}`}>
+                  <input
+                    type="color"
+                    value={accentColor}
+                    onChange={(e) => setAccentColor(e.target.value)}
+                    className="accent-color-input"
+                    title="Custom color"
+                  />
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                  </svg>
+                </div>
+              </div>
+            </div>
+
+            {/* Screenshot Analysis */}
+            <div className="settings-section">
+              <label className="settings-label">Screenshot Analysis</label>
+              <div className="settings-toggle-row">
+                <div className="settings-toggle-info">
+                  <span className="settings-toggle-title">Instant Analysis</span>
+                  <span className="settings-toggle-desc">
+                    Automatically analyze captured regions with GPT-4o
+                  </span>
+                </div>
+                <button
+                  className={`settings-toggle ${instantAnalysisEnabled ? "active" : ""}`}
+                  onClick={() => setInstantAnalysisEnabled((prev) => !prev)}
+                  role="switch"
+                  aria-checked={instantAnalysisEnabled}
+                >
+                  <span className="settings-toggle-thumb" />
+                </button>
+              </div>
+
+              {instantAnalysisEnabled && (
+                <>
+                  <label className="settings-label" style={{ marginTop: 16 }}>Analysis Mode</label>
+                  <div className="analysis-mode-switcher">
+                    {(Object.keys(ANALYSIS_MODES) as AnalysisMode[]).map((mode) => (
+                      <button
+                        key={mode}
+                        className={`analysis-mode-option ${analysisMode === mode ? "active" : ""}`}
+                        onClick={() => setAnalysisMode(mode)}
+                      >
+                        {mode === "general" && (
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <circle cx="12" cy="12" r="10" />
+                            <path d="M12 16v-4" />
+                            <path d="M12 8h.01" />
+                          </svg>
+                        )}
+                        {mode === "sports" && (
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <circle cx="12" cy="12" r="10" />
+                            <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
+                            <path d="M2 12h20" />
+                          </svg>
+                        )}
+                        {mode === "code" && (
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="16 18 22 12 16 6" />
+                            <polyline points="8 6 2 12 8 18" />
+                          </svg>
+                        )}
+                        {mode === "quiz" && (
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M9 11l3 3L22 4" />
+                            <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+                          </svg>
+                        )}
+                        <span>{ANALYSIS_MODES[mode].label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </>
               )}
             </div>
           </div>

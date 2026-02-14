@@ -27,18 +27,18 @@
   --text-tertiary: #5e5a54;
   --text-inverse: #ffffff;
 
-  --accent: #d4874d;
-  --accent-hover: #c47a42;
-  --accent-soft: rgba(212, 135, 77, 0.12);
-  --accent-softer: rgba(212, 135, 77, 0.06);
-  --accent-text: #e0995e;
-  --accent-glow: 0 0 24px rgba(212, 135, 77, 0.12);
+  --accent: var(--accent-base, #d4874d);
+  --accent-hover: var(--accent-hover-dark, #c47a42);
+  --accent-soft: var(--accent-soft-val, rgba(212, 135, 77, 0.12));
+  --accent-softer: var(--accent-softer-val, rgba(212, 135, 77, 0.06));
+  --accent-text: var(--accent-text-dark, #e0995e);
+  --accent-glow: var(--accent-glow-val, 0 0 24px rgba(212, 135, 77, 0.12));
 
   --danger: #e85454;
   --danger-soft: rgba(232, 84, 84, 0.10);
   --danger-text: #f07070;
 
-  --user-bubble: linear-gradient(135deg, #d4874d 0%, #b56c32 100%);
+  --user-bubble: linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%);
   --assistant-bubble: rgba(255, 255, 255, 0.03);
 
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.25);
@@ -158,7 +158,7 @@ input::placeholder {
 }
 
 ::selection {
-  background: rgba(212, 135, 77, 0.30);
+  background: rgba(var(--accent-rgb, 212, 135, 77), 0.30);
   color: inherit;
 }
 
@@ -182,10 +182,60 @@ input::placeholder {
   background: rgba(255, 255, 255, 0.13);
 }
 
-/* ── Light mode ─────────────────────────────────────────────────── */
+/* ── Light mode (manual toggle) ────────────────────────────────── */
+
+[data-theme="light"] {
+  --bg-primary: #f6f4f0;
+  --bg-secondary: #ffffff;
+  --bg-elevated: #faf9f7;
+  --bg-surface: rgba(0, 0, 0, 0.03);
+  --bg-surface-hover: rgba(0, 0, 0, 0.05);
+  --bg-surface-active: rgba(0, 0, 0, 0.08);
+
+  --border-subtle: rgba(0, 0, 0, 0.06);
+  --border-default: rgba(0, 0, 0, 0.10);
+  --border-strong: rgba(0, 0, 0, 0.15);
+
+  --text-primary: #1a1815;
+  --text-secondary: rgba(0, 0, 0, 0.55);
+  --text-tertiary: rgba(0, 0, 0, 0.32);
+  --text-inverse: #ffffff;
+
+  --accent: var(--accent-base-light, #b87530);
+  --accent-hover: var(--accent-hover-light, #a56828);
+  --accent-soft: var(--accent-soft-val, rgba(184, 117, 48, 0.10));
+  --accent-softer: var(--accent-softer-val, rgba(184, 117, 48, 0.05));
+  --accent-text: var(--accent-text-light, #96611e);
+  --accent-glow: var(--accent-glow-val, 0 0 24px rgba(184, 117, 48, 0.06));
+
+  --danger-soft: rgba(232, 84, 84, 0.08);
+  --danger-text: #cc4444;
+
+  --user-bubble: linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%);
+  --assistant-bubble: rgba(0, 0, 0, 0.03);
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 4px 20px rgba(0, 0, 0, 0.07);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.10);
+  --shadow-overlay: 0 24px 64px rgba(0, 0, 0, 0.14);
+
+  color-scheme: light;
+  color: var(--text-primary);
+  background-color: var(--bg-primary);
+}
+
+[data-theme="light"] ::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.10);
+}
+
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.18);
+}
+
+/* ── Light mode (system preference fallback) ──────────────────── */
 
 @media (prefers-color-scheme: light) {
-  :root {
+  [data-theme="system"] {
     --bg-primary: #f6f4f0;
     --bg-secondary: #ffffff;
     --bg-elevated: #faf9f7;
@@ -202,16 +252,17 @@ input::placeholder {
     --text-tertiary: rgba(0, 0, 0, 0.32);
     --text-inverse: #ffffff;
 
-    --accent: #b87530;
-    --accent-hover: #a56828;
-    --accent-soft: rgba(184, 117, 48, 0.10);
-    --accent-softer: rgba(184, 117, 48, 0.05);
-    --accent-text: #96611e;
-    --accent-glow: 0 0 24px rgba(184, 117, 48, 0.06);
+    --accent: var(--accent-base-light, #b87530);
+    --accent-hover: var(--accent-hover-light, #a56828);
+    --accent-soft: var(--accent-soft-val, rgba(184, 117, 48, 0.10));
+    --accent-softer: var(--accent-softer-val, rgba(184, 117, 48, 0.05));
+    --accent-text: var(--accent-text-light, #96611e);
+    --accent-glow: var(--accent-glow-val, 0 0 24px rgba(184, 117, 48, 0.06));
 
     --danger-soft: rgba(232, 84, 84, 0.08);
     --danger-text: #cc4444;
 
+    --user-bubble: linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%);
     --assistant-bubble: rgba(0, 0, 0, 0.03);
 
     --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
@@ -224,11 +275,11 @@ input::placeholder {
     background-color: var(--bg-primary);
   }
 
-  ::-webkit-scrollbar-thumb {
+  [data-theme="system"] ::-webkit-scrollbar-thumb {
     background: rgba(0, 0, 0, 0.10);
   }
 
-  ::-webkit-scrollbar-thumb:hover {
+  [data-theme="system"] ::-webkit-scrollbar-thumb:hover {
     background: rgba(0, 0, 0, 0.18);
   }
 }
