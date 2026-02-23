@@ -1,8 +1,45 @@
 use base64::{engine::general_purpose::STANDARD, Engine};
 use image::ImageFormat;
+use img_hash::{HasherConfig, ImageHash};
+use regex::Regex;
 use serde::Serialize;
 use std::io::Cursor;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH};
+use tauri::Emitter;
+use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
+
+/// State for an active watch session.
+pub struct WatchSession {
+    pub window_id: u32,
+    pub last_hash: Option<ImageHash>,
+    pub last_question: Option<String>,
+    pub is_running: bool,
+    pub stop_flag: Arc<AtomicBool>,
+}
+
+/// Event emitted to the frontend during watch.
+#[derive(Serialize, Clone)]
+pub struct WatchEvent {
+    pub event_type: String,
+    pub question: Option<String>,
+    pub raw_text: Option<String>,
+    pub timestamp_ms: u64,
+}
+
+/// Status response for get_watch_status.
+#[derive(Serialize)]
+pub struct WatchStatus {
+    pub is_running: bool,
+    pub window_id: Option<u32>,
+    pub last_question: Option<String>,
+}
+
+/// Shared watch state managed by Tauri.
+pub type WatchState = Mutex<Option<WatchSession>>;
 
 /// Metadata about an available monitor.
 #[derive(Serialize)]
@@ -32,6 +69,368 @@ pub struct WindowInfo {
     pub width: u32,
     pub height: u32,
     pub is_minimized: bool,
+}
+
+// ---------------------------------------------------------------------------
+// Helper functions
+// ---------------------------------------------------------------------------
+
+fn current_timestamp_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+fn compute_hash(rgba_image: &image::RgbaImage) -> ImageHash {
+    let dynamic = image::DynamicImage::ImageRgba8(rgba_image.clone());
+    let hasher = HasherConfig::new().to_hasher();
+    hasher.hash_image(&dynamic)
+}
+
+fn detect_question(text: &str) -> Option<String> {
+    // Pattern 1: Any question mark
+    let question_mark_re = Regex::new(r"\?").unwrap();
+    if question_mark_re.is_match(text) {
+        // Try to extract the sentence containing '?'
+        let sentences: Vec<&str> = text.split(|c| c == '.' || c == '!' || c == '?').collect();
+        // Find the segment right before a '?' by looking at the original text
+        for (i, ch) in text.char_indices() {
+            if ch == '?' {
+                // Walk backwards to find sentence start
+                let start = text[..i]
+                    .rfind(|c| c == '.' || c == '!' || c == '\n')
+                    .map(|p| p + 1)
+                    .unwrap_or(0);
+                let sentence = text[start..=i].trim();
+                if !sentence.is_empty() {
+                    let truncated: String = sentence.chars().take(500).collect();
+                    return Some(truncated);
+                }
+            }
+        }
+        // Fallback: first 500 chars
+        let truncated: String = text.chars().take(500).collect();
+        return Some(truncated);
+    }
+
+    // Pattern 2: Numbered quiz items (Q1., Q2))
+    let quiz_re = Regex::new(r"(?i)\bQ\d+[\.)]").unwrap();
+    if quiz_re.is_match(text) {
+        let truncated: String = text.chars().take(500).collect();
+        return Some(truncated);
+    }
+
+    // Pattern 3: Question-word sentence start (check each line)
+    let question_word_re =
+        Regex::new(r"(?i)^(which|what|who|when|where|how|why)\b").unwrap();
+    for line in text.lines() {
+        if question_word_re.is_match(line.trim()) {
+            let truncated: String = text.chars().take(500).collect();
+            return Some(truncated);
+        }
+    }
+
+    // Pattern 4: Common quiz phrases
+    let quiz_phrase_re =
+        Regex::new(r"(?i)\b(true or false|select all|choose the)\b").unwrap();
+    if quiz_phrase_re.is_match(text) {
+        let truncated: String = text.chars().take(500).collect();
+        return Some(truncated);
+    }
+
+    None
+}
+
+// ---------------------------------------------------------------------------
+// OCR — macOS native implementation
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "macos")]
+fn run_ocr(png_bytes: &[u8]) -> Result<String, String> {
+    use objc2::rc::Retained;
+    use objc2_foundation::{NSArray, NSData, NSDictionary};
+    use objc2_vision::{
+        VNImageRequestHandler, VNRecognizeTextRequest, VNRequestTextRecognitionLevel,
+    };
+
+    unsafe {
+        let data = NSData::with_bytes(png_bytes);
+
+        let handler = VNImageRequestHandler::initWithData_options(
+            VNImageRequestHandler::alloc(),
+            &data,
+            &NSDictionary::new(),
+        );
+
+        let request = VNRecognizeTextRequest::new();
+        request.setRecognitionLevel(VNRequestTextRecognitionLevel::Accurate);
+
+        let requests: Retained<NSArray<VNRecognizeTextRequest>> =
+            NSArray::from_retained_slice(&[request.clone()]);
+
+        let mut error = None;
+        let success = handler.performRequests_error(
+            &requests,
+            &mut error,
+        );
+
+        if !success {
+            if let Some(err) = error {
+                return Err(format!("OCR failed: {}", err.localizedDescription()));
+            }
+            return Err("OCR failed with unknown error".to_string());
+        }
+
+        if let Some(results) = request.results() {
+            let mut texts = Vec::new();
+            for i in 0..results.len() {
+                let observation = &results[i];
+                let candidates = observation.topCandidates(1);
+                if candidates.len() > 0 {
+                    let candidate = &candidates[0];
+                    texts.push(candidate.string().to_string());
+                }
+            }
+            Ok(texts.join("\n"))
+        } else {
+            Ok(String::new())
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn run_ocr(_png_bytes: &[u8]) -> Result<String, String> {
+    Err("OCR is only supported on macOS".to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Watch commands
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+async fn start_watch(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, WatchState>,
+    window_id: u32,
+    interval_ms: u64,
+    hash_threshold: u32,
+) -> Result<(), String> {
+    // Setup: check if already running, create session
+    {
+        let mut guard = state.lock().map_err(|e| format!("Lock error: {e}"))?;
+        if let Some(ref session) = *guard {
+            if session.is_running {
+                return Err("Watch already running".to_string());
+            }
+        }
+        let stop_flag = Arc::new(AtomicBool::new(false));
+        *guard = Some(WatchSession {
+            window_id,
+            last_hash: None,
+            last_question: None,
+            is_running: true,
+            stop_flag: stop_flag.clone(),
+        });
+    }
+
+    let app_clone = app.clone();
+
+    tauri::async_runtime::spawn(async move {
+        let state_clone = app_clone.state::<WatchState>();
+
+        // Read stop_flag from state
+        let stop_flag = {
+            let guard = state_clone.lock().unwrap();
+            guard.as_ref().unwrap().stop_flag.clone()
+        };
+
+        loop {
+            tokio::time::sleep(Duration::from_millis(interval_ms)).await;
+
+            if stop_flag.load(Ordering::Relaxed) {
+                break;
+            }
+
+            // Capture window screenshot on blocking thread
+            let wid = window_id;
+            let capture_result =
+                tauri::async_runtime::spawn_blocking(move || {
+                    let windows = xcap::Window::all()
+                        .map_err(|e| format!("Failed to list windows: {e}"))?;
+
+                    let window = windows
+                        .into_iter()
+                        .find(|w| w.id() == wid)
+                        .ok_or_else(|| format!("Window with id {wid} not found"))?;
+
+                    let rgba_image = window
+                        .capture_image()
+                        .map_err(|e| format!("Failed to capture window: {e}"))?;
+
+                    let mut png_bytes: Vec<u8> = Vec::new();
+                    rgba_image
+                        .write_to(&mut Cursor::new(&mut png_bytes), ImageFormat::Png)
+                        .map_err(|e| format!("Failed to encode PNG: {e}"))?;
+
+                    Ok::<(Vec<u8>, image::RgbaImage), String>((png_bytes, rgba_image))
+                })
+                .await;
+
+            let (png_bytes, rgba_image) = match capture_result {
+                Ok(Ok(data)) => data,
+                Ok(Err(e)) => {
+                    let event = WatchEvent {
+                        event_type: "error".to_string(),
+                        question: None,
+                        raw_text: Some(e),
+                        timestamp_ms: current_timestamp_ms(),
+                    };
+                    let _ = app_clone.emit("watch_event", event);
+                    break;
+                }
+                Err(e) => {
+                    let event = WatchEvent {
+                        event_type: "error".to_string(),
+                        question: None,
+                        raw_text: Some(format!("Task join error: {e}")),
+                        timestamp_ms: current_timestamp_ms(),
+                    };
+                    let _ = app_clone.emit("watch_event", event);
+                    break;
+                }
+            };
+
+            // Compute perceptual hash and compare
+            let new_hash = compute_hash(&rgba_image);
+
+            let should_ocr = {
+                let guard = state_clone.lock().unwrap();
+                if let Some(ref session) = *guard {
+                    match &session.last_hash {
+                        Some(last) => last.dist(&new_hash) > hash_threshold,
+                        None => true, // First capture, always process
+                    }
+                } else {
+                    break; // Session was cleared
+                }
+            };
+
+            if !should_ocr {
+                continue;
+            }
+
+            // Run OCR
+            let ocr_text = match run_ocr(&png_bytes) {
+                Ok(text) => text,
+                Err(_) => continue,
+            };
+
+            if ocr_text.trim().is_empty() {
+                // Update hash even if no text
+                let mut guard = state_clone.lock().unwrap();
+                if let Some(ref mut session) = *guard {
+                    session.last_hash = Some(new_hash);
+                }
+                continue;
+            }
+
+            // Detect question
+            let question = detect_question(&ocr_text);
+
+            if question.is_none() {
+                // Update hash only, no question detected
+                let mut guard = state_clone.lock().unwrap();
+                if let Some(ref mut session) = *guard {
+                    session.last_hash = Some(new_hash);
+                }
+                continue;
+            }
+
+            let question_text = question.unwrap();
+
+            // Check if same as last question
+            let is_duplicate = {
+                let guard = state_clone.lock().unwrap();
+                if let Some(ref session) = *guard {
+                    session.last_question.as_deref() == Some(&question_text)
+                } else {
+                    false
+                }
+            };
+
+            if is_duplicate {
+                continue;
+            }
+
+            // Update state with new hash and question
+            {
+                let mut guard = state_clone.lock().unwrap();
+                if let Some(ref mut session) = *guard {
+                    session.last_hash = Some(new_hash);
+                    session.last_question = Some(question_text.clone());
+                }
+            }
+
+            // Emit question detected event
+            let event = WatchEvent {
+                event_type: "question_detected".to_string(),
+                question: Some(question_text),
+                raw_text: Some(ocr_text),
+                timestamp_ms: current_timestamp_ms(),
+            };
+            let _ = app_clone.emit("watch_event", event);
+        }
+
+        // Mark session as not running when loop ends
+        let mut guard = state_clone.lock().unwrap();
+        if let Some(ref mut session) = *guard {
+            session.is_running = false;
+        }
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+fn stop_watch(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, WatchState>,
+) -> Result<(), String> {
+    let mut guard = state.lock().map_err(|e| format!("Lock error: {e}"))?;
+    if let Some(ref mut session) = *guard {
+        if session.is_running {
+            session.stop_flag.store(true, Ordering::Relaxed);
+            session.is_running = false;
+        }
+    }
+
+    let event = WatchEvent {
+        event_type: "watch_stopped".to_string(),
+        question: None,
+        raw_text: None,
+        timestamp_ms: current_timestamp_ms(),
+    };
+    let _ = app.emit("watch_event", event);
+
+    Ok(())
+}
+
+#[tauri::command]
+fn get_watch_status(state: tauri::State<'_, WatchState>) -> WatchStatus {
+    let guard = state.lock().unwrap();
+    match *guard {
+        Some(ref session) => WatchStatus {
+            is_running: session.is_running,
+            window_id: Some(session.window_id),
+            last_question: session.last_question.clone(),
+        },
+        None => WatchStatus {
+            is_running: false,
+            window_id: None,
+            last_question: None,
+        },
+    }
 }
 
 /// Lists all available monitors with their metadata.
@@ -203,6 +602,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_screenshots::init())
         .plugin(tauri_plugin_dialog::init())
+        .manage(Mutex::new(None::<WatchSession>))
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -219,6 +619,9 @@ pub fn run() {
             list_windows,
             capture_window_screenshot,
             pick_image_file,
+            start_watch,
+            stop_watch,
+            get_watch_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
