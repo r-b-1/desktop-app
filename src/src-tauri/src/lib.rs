@@ -83,7 +83,13 @@ fn current_timestamp_ms() -> u64 {
 }
 
 fn compute_hash(rgba_image: &image::RgbaImage) -> ImageHash {
-    let dynamic = image::DynamicImage::ImageRgba8(rgba_image.clone());
+    let compatible = img_hash::image::RgbaImage::from_raw(
+        rgba_image.width(),
+        rgba_image.height(),
+        rgba_image.clone().into_raw(),
+    )
+    .expect("xcap returned invalid RGBA image dimensions");
+    let dynamic = img_hash::image::DynamicImage::ImageRgba8(compatible);
     let hasher = HasherConfig::new().to_hasher();
     hasher.hash_image(&dynamic)
 }
@@ -93,7 +99,6 @@ fn detect_question(text: &str) -> Option<String> {
     let question_mark_re = Regex::new(r"\?").unwrap();
     if question_mark_re.is_match(text) {
         // Try to extract the sentence containing '?'
-        let sentences: Vec<&str> = text.split(|c| c == '.' || c == '!' || c == '?').collect();
         // Find the segment right before a '?' by looking at the original text
         for (i, ch) in text.char_indices() {
             if ch == '?' {
@@ -148,10 +153,10 @@ fn detect_question(text: &str) -> Option<String> {
 
 #[cfg(target_os = "macos")]
 fn run_ocr(png_bytes: &[u8]) -> Result<String, String> {
-    use objc2::rc::Retained;
+    use objc2::AnyThread;
     use objc2_foundation::{NSArray, NSData, NSDictionary};
     use objc2_vision::{
-        VNImageRequestHandler, VNRecognizeTextRequest, VNRequestTextRecognitionLevel,
+        VNImageRequestHandler, VNRecognizeTextRequest, VNRequest, VNRequestTextRecognitionLevel,
     };
 
     unsafe {
@@ -166,29 +171,20 @@ fn run_ocr(png_bytes: &[u8]) -> Result<String, String> {
         let request = VNRecognizeTextRequest::new();
         request.setRecognitionLevel(VNRequestTextRecognitionLevel::Accurate);
 
-        let requests: Retained<NSArray<VNRecognizeTextRequest>> =
-            NSArray::from_retained_slice(&[request.clone()]);
+        let requests = NSArray::from_retained_slice(&[request.clone()]);
+        let requests: &NSArray<VNRequest> = requests.cast_unchecked();
 
-        let mut error = None;
-        let success = handler.performRequests_error(
-            &requests,
-            &mut error,
-        );
-
-        if !success {
-            if let Some(err) = error {
-                return Err(format!("OCR failed: {}", err.localizedDescription()));
-            }
-            return Err("OCR failed with unknown error".to_string());
+        if let Err(err) = handler.performRequests_error(requests) {
+            return Err(format!("OCR failed: {}", err.localizedDescription()));
         }
 
         if let Some(results) = request.results() {
             let mut texts = Vec::new();
-            for i in 0..results.len() {
-                let observation = &results[i];
+            for i in 0..results.count() {
+                let observation = results.objectAtIndex(i);
                 let candidates = observation.topCandidates(1);
-                if candidates.len() > 0 {
-                    let candidate = &candidates[0];
+                if candidates.count() > 0 {
+                    let candidate = candidates.objectAtIndex(0);
                     texts.push(candidate.string().to_string());
                 }
             }
